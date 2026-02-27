@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -16,6 +17,7 @@ import (
 const (
 	transcriptionURL = "https://api.groq.com/openai/v1/audio/transcriptions"
 	maxBytes         = 25 * 1024 * 1024 // 25MB Groq limit
+	segmentSeconds   = 600              // 10-minute segments
 )
 
 type Transcriber struct {
@@ -31,18 +33,18 @@ func New(apiKey string) *Transcriber {
 }
 
 // Transcribe sends audio to Groq Whisper API.
-// Files over 25MB are not supported and will return an error.
+// Files over 25MB are split into segments using ffmpeg.
 func (t *Transcriber) Transcribe(ctx context.Context, audioPath string) (string, error) {
 	info, err := os.Stat(audioPath)
 	if err != nil {
 		return "", fmt.Errorf("stat audio file: %w", err)
 	}
 
-	if info.Size() > maxBytes {
-		return "", fmt.Errorf("audio file exceeds 25MB limit (%d bytes); please use a shorter recording", info.Size())
+	if info.Size() <= maxBytes {
+		return t.transcribeFile(ctx, audioPath)
 	}
 
-	return t.transcribeFile(ctx, audioPath)
+	return t.transcribeSegmented(ctx, audioPath)
 }
 
 func (t *Transcriber) transcribeFile(ctx context.Context, audioPath string) (string, error) {
@@ -97,6 +99,52 @@ func (t *Transcriber) transcribeFile(ctx context.Context, audioPath string) (str
 	}
 
 	return strings.TrimSpace(string(body)), nil
+}
+
+func (t *Transcriber) transcribeSegmented(ctx context.Context, audioPath string) (string, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("audio file exceeds 25MB and ffmpeg is not installed for segmentation")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "odin-writer-segments-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	segPattern := filepath.Join(tmpDir, "seg%03d.mp3")
+	cmd := exec.CommandContext(ctx,
+		"ffmpeg",
+		"-i", audioPath,
+		"-f", "segment",
+		"-segment_time", fmt.Sprintf("%d", segmentSeconds),
+		"-vn",
+		"-ar", "16000",
+		"-ac", "1",
+		"-q:a", "4",
+		segPattern,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("ffmpeg segmentation: %w\n%s", err, string(out))
+	}
+
+	segments, err := filepath.Glob(filepath.Join(tmpDir, "seg*.mp3"))
+	if err != nil || len(segments) == 0 {
+		return "", fmt.Errorf("no segments created by ffmpeg")
+	}
+
+	// Sort segments (glob returns them sorted alphabetically)
+	var parts []string
+	for i, seg := range segments {
+		fmt.Printf("  transcribing segment %d/%d...\n", i+1, len(segments))
+		text, err := t.transcribeFile(ctx, seg)
+		if err != nil {
+			return "", fmt.Errorf("segment %d: %w", i+1, err)
+		}
+		parts = append(parts, text)
+	}
+
+	return strings.Join(parts, " "), nil
 }
 
 // groqErrorMessage extracts a human-readable error from a Groq API error response.
