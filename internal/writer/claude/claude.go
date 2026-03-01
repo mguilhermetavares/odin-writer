@@ -26,7 +26,7 @@ func New(apiKey, model string, _ int) *Writer {
 
 // GenerateArticle sends the transcript to Claude and returns an article.
 func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle string) (*writer.Article, error) {
-	prompt := fmt.Sprintf("Você é um jornalista esportivo especialista em NFL e Minnesota Vikings. Com base na transcrição abaixo, escreva um artigo em português do Brasil.\n\nTítulo: %s\n\nTranscrição:\n%s", mediaTitle, transcript)
+	prompt := w.buildPrompt(transcript, mediaTitle)
 
 	resp, err := w.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(w.model),
@@ -69,4 +69,30 @@ func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle str
 		Excerpt: "",
 		Body:    body,
 	}, nil
+}
+
+func (w *Writer) buildPrompt(transcript, videoTitle string) string {
+	return fmt.Sprintf(`Você é um redator esportivo especialista em NFL e Minnesota Vikings, escrevendo para o Minnesota Vikings BR, o maior fansite brasileiro do time.
+
+Com base na transcrição abaixo de um episódio do podcast "Minnesota Vikings BR", escreva um artigo em português do Brasil que reproduza fielmente o conteúdo discutido.
+
+Título original do episódio: %s
+
+Transcrição:
+%s
+
+---
+
+Escreva o artigo em texto corrido. Comece pelo título na primeira linha, seguido pelos parágrafos do corpo.
+
+Diretrizes de conteúdo:
+- O artigo deve refletir fielmente o que foi discutido no podcast
+- Não invente argumentos ou informações que não estejam na transcrição
+- Estrutura: lide forte, desenvolvimento dos temas principais, conclusão
+- Tamanho: 800 a 1.200 palavras, entre 7 e 9 parágrafos
+
+Diretrizes de estilo:
+- Tom: técnico, direto e apaixonado
+- Termos técnicos da NFL em inglês: QB, WR, RB, TE, blitz, sack, draft, touchdown
+- Proibido usar travessão (—) em qualquer parte do texto`, videoTitle, transcript)
 }
