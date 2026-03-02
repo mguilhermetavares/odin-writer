@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,21 +13,28 @@ import (
 )
 
 type Writer struct {
-	client *anthropic.Client
-	model  string
+	client          *anthropic.Client
+	model           string
+	transcriptLimit int
 }
 
-func New(apiKey, model string, _ int) *Writer {
+func New(apiKey, model string, transcriptLimit int) *Writer {
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
 	return &Writer{
-		client: &client,
-		model:  model,
+		client:          &client,
+		model:           model,
+		transcriptLimit: transcriptLimit,
 	}
 }
 
-// GenerateArticle sends the transcript to Claude and returns an article.
+// GenerateArticle sends the transcript to Claude and parses the JSON article response.
 func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle string) (*writer.Article, error) {
-	prompt := w.buildPrompt(transcript, mediaTitle)
+	excerpt := transcript
+	if len(excerpt) > w.transcriptLimit {
+		excerpt = excerpt[:w.transcriptLimit]
+	}
+
+	prompt := w.buildPrompt(excerpt, mediaTitle)
 
 	resp, err := w.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(w.model),
@@ -51,24 +59,7 @@ func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle str
 		return nil, fmt.Errorf("claude returned empty response")
 	}
 
-	var body []string
-	for _, line := range strings.Split(text, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			body = append(body, line)
-		}
-	}
-
-	title := mediaTitle
-	if len(body) > 0 {
-		title = body[0]
-		body = body[1:]
-	}
-
-	return &writer.Article{
-		Title:   title,
-		Excerpt: "",
-		Body:    body,
-	}, nil
+	return parseArticleJSON(text)
 }
 
 func (w *Writer) buildPrompt(transcript, videoTitle string) string {
@@ -83,16 +74,60 @@ Transcrição:
 
 ---
 
-Escreva o artigo em texto corrido. Comece pelo título na primeira linha, seguido pelos parágrafos do corpo.
+Retorne SOMENTE um JSON válido com esta estrutura (sem markdown, sem `+"`"+`json`+"`"+`):
+{
+  "title": "título criativo e jornalístico (não repita o título do episódio)",
+  "excerpt": "resumo em 2-3 frases apresentando o tema central do artigo",
+  "body": [
+    "parágrafo 1",
+    "parágrafo 2",
+    "..."
+  ]
+}
 
 Diretrizes de conteúdo:
-- O artigo deve refletir fielmente o que foi discutido no podcast
-- Não invente argumentos ou informações que não estejam na transcrição
-- Estrutura: lide forte, desenvolvimento dos temas principais, conclusão
+- O artigo deve refletir fielmente o que foi discutido no podcast — as opiniões e análises são dos apresentadores, não suas
+- Não invente argumentos, posições ou informações que não estejam na transcrição
+- Não mencione o podcast, os apresentadores ou o programa dentro do texto — escreva como artigo independente
+- Estrutura: lide forte (o quê e por que importa), desenvolvimento dos temas principais, conclusão
 - Tamanho: 800 a 1.200 palavras, entre 7 e 9 parágrafos
+- Cada parágrafo deve desenvolver uma ideia de forma fluida, sem enumerar tópicos em sequência
 
 Diretrizes de estilo:
-- Tom: técnico, direto e apaixonado
-- Termos técnicos da NFL em inglês: QB, WR, RB, TE, blitz, sack, draft, touchdown
-- Proibido usar travessão (—) em qualquer parte do texto`, videoTitle, transcript)
+- Tom: técnico, direto e apaixonado, no estilo do The Playoffs e da ESPN Brasil
+- Termos técnicos da NFL em inglês sem tradução: QB, WR, RB, TE, OL, DL, LB, CB, blitz, sack, snap, draft, touchdown, field goal, red zone, first down, playoff, wildcard, bye week
+- Jardas podem ser usadas normalmente em português
+- Proibido usar travessão (—) em qualquer parte do texto
+- Sem bullet points ou listas no corpo do artigo
+- Linguagem para fãs experientes: não explique conceitos básicos`, videoTitle, transcript)
+}
+
+type articleJSON struct {
+	Title   string   `json:"title"`
+	Excerpt string   `json:"excerpt"`
+	Body    []string `json:"body"`
+}
+
+func parseArticleJSON(text string) (*writer.Article, error) {
+	// Extract JSON even if surrounded by other text
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON object found in claude response")
+	}
+
+	var a articleJSON
+	if err := json.Unmarshal([]byte(text[start:end+1]), &a); err != nil {
+		return nil, fmt.Errorf("parsing article JSON: %w", err)
+	}
+
+	if a.Title == "" || a.Excerpt == "" || len(a.Body) == 0 {
+		return nil, fmt.Errorf("incomplete article: missing title, excerpt or body")
+	}
+
+	return &writer.Article{
+		Title:   a.Title,
+		Excerpt: a.Excerpt,
+		Body:    a.Body,
+	}, nil
 }
