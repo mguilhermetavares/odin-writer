@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"odin-writer/internal/writer"
 )
@@ -34,12 +37,16 @@ func (p *Publisher) CreateDraft(ctx context.Context, article *writer.Article, me
 	docID := "drafts.odin-writer-" + mediaID
 
 	doc := map[string]any{
-		"_id":         docID,
-		"_type":       "article",
-		"title":       article.Title,
+		"_id":   docID,
+		"_type": "article",
+		"title": article.Title,
+		"slug": map[string]any{
+			"_type":   "slug",
+			"current": slugify(article.Title),
+		},
 		"publishedAt": time.Now().UTC().Format(time.RFC3339),
 		"excerpt":     article.Excerpt,
-		"body":        strings.Join(article.Body, "\n\n"),
+		"body":        paragraphsToPortableText(article.Body),
 		"author":      "Minnesota Vikings BR",
 		"category":    "noticias",
 	}
@@ -79,4 +86,91 @@ func (p *Publisher) CreateDraft(ctx context.Context, article *writer.Article, me
 	}
 
 	return docID, nil
+}
+
+// portableTextBlock is a Sanity Portable Text block.
+type portableTextBlock struct {
+	Type     string             `json:"_type"`
+	Key      string             `json:"_key"`
+	Style    string             `json:"style"`
+	MarkDefs []any              `json:"markDefs"`
+	Children []portableTextSpan `json:"children"`
+}
+
+type portableTextSpan struct {
+	Type  string `json:"_type"`
+	Key   string `json:"_key"`
+	Text  string `json:"text"`
+	Marks []any  `json:"marks"`
+}
+
+func paragraphsToPortableText(paragraphs []string) []portableTextBlock {
+	blocks := make([]portableTextBlock, 0, len(paragraphs))
+	for _, p := range paragraphs {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		blocks = append(blocks, portableTextBlock{
+			Type:     "block",
+			Key:      randHex(8),
+			Style:    "normal",
+			MarkDefs: []any{},
+			Children: []portableTextSpan{
+				{
+					Type:  "span",
+					Key:   randHex(8),
+					Text:  p,
+					Marks: []any{},
+				},
+			},
+		})
+	}
+	return blocks
+}
+
+var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9\s-]`)
+var multiDashRe = regexp.MustCompile(`[-\s]+`)
+
+// slugify converts a title to a URL-friendly slug.
+// Handles common Portuguese characters via manual mapping.
+func slugify(title string) string {
+	title = strings.ToLower(title)
+
+	var b strings.Builder
+	for _, r := range title {
+		switch r {
+		case 'á', 'à', 'â', 'ã', 'ä':
+			b.WriteRune('a')
+		case 'é', 'è', 'ê', 'ë':
+			b.WriteRune('e')
+		case 'í', 'ì', 'î', 'ï':
+			b.WriteRune('i')
+		case 'ó', 'ò', 'ô', 'õ', 'ö':
+			b.WriteRune('o')
+		case 'ú', 'ù', 'û', 'ü':
+			b.WriteRune('u')
+		case 'ç':
+			b.WriteRune('c')
+		case 'ñ':
+			b.WriteRune('n')
+		default:
+			if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' {
+				b.WriteRune(r)
+			}
+		}
+	}
+
+	slug := nonAlphanumRe.ReplaceAllString(b.String(), "")
+	slug = multiDashRe.ReplaceAllString(slug, "-")
+	return strings.Trim(slug, "-")
+}
+
+func randHex(n int) string {
+	const chars = "0123456789abcdef"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(b)
 }
