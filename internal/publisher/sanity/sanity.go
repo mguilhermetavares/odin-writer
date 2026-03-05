@@ -3,10 +3,10 @@ package sanity
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"regexp"
 	"strings"
@@ -167,10 +167,7 @@ func slugify(title string) string {
 }
 
 func randHex(n int) string {
-	const chars = "0123456789abcdef"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
-	}
-	return string(b)
+	b := make([]byte, n/2+1)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)[:n]
 }
