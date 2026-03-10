@@ -76,42 +76,14 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 		}
 	}
 
-	// Transcription
-	transcript, err := r.cache.LoadTranscript(media.ID)
+	transcript, err := r.transcribe(ctx, media, opts)
 	if err != nil {
 		return err
-	}
-	if transcript == "" || opts.Force {
-		log.Printf("  transcribing via Groq Whisper: %s", media.AudioPath)
-		transcript, err = r.transcriber.Transcribe(ctx, media.AudioPath)
-		if err != nil {
-			return fmt.Errorf("transcription: %w", err)
-		}
-		log.Printf("  transcript: %d chars", len(transcript))
-		if err := r.cache.SaveTranscript(media.ID, transcript); err != nil {
-			log.Printf("warning: failed to cache transcript: %v", err)
-		}
-	} else {
-		log.Printf("  transcript loaded from cache (%d chars)", len(transcript))
 	}
 
-	// Article generation
-	article, err := r.cache.LoadArticle(media.ID)
+	article, err := r.generateArticle(ctx, media, transcript, opts)
 	if err != nil {
 		return err
-	}
-	if article == nil || opts.Force {
-		log.Println("  generating article with Claude...")
-		article, err = r.writer.GenerateArticle(ctx, transcript, media.Title)
-		if err != nil {
-			return fmt.Errorf("generating article: %w", err)
-		}
-		log.Printf("  title: %s", article.Title)
-		if err := r.cache.SaveArticle(media.ID, article); err != nil {
-			log.Printf("warning: failed to cache article: %v", err)
-		}
-	} else {
-		log.Printf("  article loaded from cache: %s", article.Title)
 	}
 
 	log.Println("publishing draft to Sanity...")
@@ -135,4 +107,56 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 	log.Println("  review : https://minnesotavikingsbr.com/studio")
 
 	return nil
+}
+
+func (r *Runner) transcribe(ctx context.Context, media *source.Media, opts RunOptions) (string, error) {
+	if !opts.Force {
+		transcript, err := r.cache.LoadTranscript(media.ID)
+		if err != nil {
+			return "", err
+		}
+		if transcript != "" {
+			log.Printf("  transcript loaded from cache (%d chars)", len(transcript))
+			return transcript, nil
+		}
+	}
+
+	log.Printf("  transcribing via Groq Whisper: %s", media.AudioPath)
+	transcript, err := r.transcriber.Transcribe(ctx, media.AudioPath)
+	if err != nil {
+		return "", fmt.Errorf("transcription: %w", err)
+	}
+	log.Printf("  transcript: %d chars", len(transcript))
+
+	if err := r.cache.SaveTranscript(media.ID, transcript); err != nil {
+		log.Printf("warning: failed to cache transcript: %v", err)
+	}
+
+	return transcript, nil
+}
+
+func (r *Runner) generateArticle(ctx context.Context, media *source.Media, transcript string, opts RunOptions) (*writer.Article, error) {
+	if !opts.Force {
+		article, err := r.cache.LoadArticle(media.ID)
+		if err != nil {
+			return nil, err
+		}
+		if article != nil {
+			log.Printf("  article loaded from cache: %s", article.Title)
+			return article, nil
+		}
+	}
+
+	log.Println("  generating article with Claude...")
+	article, err := r.writer.GenerateArticle(ctx, transcript, media.Title)
+	if err != nil {
+		return nil, fmt.Errorf("generating article: %w", err)
+	}
+	log.Printf("  title: %s", article.Title)
+
+	if err := r.cache.SaveArticle(media.ID, article); err != nil {
+		log.Printf("warning: failed to cache article: %v", err)
+	}
+
+	return article, nil
 }
