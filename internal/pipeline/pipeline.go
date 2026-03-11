@@ -48,12 +48,14 @@ func NewRunner(
 func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 	log.Println("odin-writer starting")
 
+	// Create temp dir for audio downloads
 	tmpDir, err := os.MkdirTemp("", "odin-writer-audio-*")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// 1. Identify media
 	log.Printf("  source: %s", opts.Source)
 	media, err := r.source.Prepare(ctx, source.Options{
 		VideoID: opts.VideoID,
@@ -65,7 +67,8 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 	}
 	log.Printf("  media: [%s] %s", media.ID, media.Title)
 
-	if !opts.Force {
+	// 2. Check state (skip if already processed, unless --force or --rewrite-only)
+	if !opts.Force && !opts.RewriteOnly {
 		processed, err := r.state.WasProcessed(media.ID)
 		if err != nil {
 			return fmt.Errorf("checking state: %w", err)
@@ -76,14 +79,31 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 		}
 	}
 
+	// 3. Transcription
 	transcript, err := r.transcribe(ctx, media, opts)
 	if err != nil {
 		return err
 	}
 
+	// 4. Article generation
 	article, err := r.generateArticle(ctx, media, transcript, opts)
 	if err != nil {
 		return err
+	}
+
+	// 5. Publish (skip for --dry-run and --rewrite-only)
+	if opts.DryRun {
+		log.Println("--dry-run: skipping publish to Sanity")
+		log.Printf("  title  : %s", article.Title)
+		log.Printf("  excerpt: %s", article.Excerpt)
+		return nil
+	}
+
+	if opts.RewriteOnly {
+		log.Println("--rewrite-only: article regenerated, skipping publish")
+		log.Printf("  title: %s", article.Title)
+		log.Printf("  cache: %s", media.ID)
+		return nil
 	}
 
 	log.Println("publishing draft to Sanity...")
@@ -92,6 +112,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 		return fmt.Errorf("publishing to Sanity: %w", err)
 	}
 
+	// 6. Save state
 	if err := r.state.Record(state.Entry{
 		SourceID:     media.SourceID,
 		MediaID:      media.ID,
@@ -110,6 +131,20 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 }
 
 func (r *Runner) transcribe(ctx context.Context, media *source.Media, opts RunOptions) (string, error) {
+	// --rewrite-only requires a cached transcript
+	if opts.RewriteOnly {
+		transcript, err := r.cache.LoadTranscript(media.ID)
+		if err != nil {
+			return "", err
+		}
+		if transcript == "" {
+			return "", fmt.Errorf("--rewrite-only requires a cached transcript for %s; run without the flag first", media.ID)
+		}
+		log.Printf("  transcript loaded from cache (%d chars)", len(transcript))
+		return transcript, nil
+	}
+
+	// Use cache unless --force
 	if !opts.Force {
 		transcript, err := r.cache.LoadTranscript(media.ID)
 		if err != nil {
@@ -136,7 +171,8 @@ func (r *Runner) transcribe(ctx context.Context, media *source.Media, opts RunOp
 }
 
 func (r *Runner) generateArticle(ctx context.Context, media *source.Media, transcript string, opts RunOptions) (*writer.Article, error) {
-	if !opts.Force {
+	// Always regenerate for --force and --rewrite-only
+	if !opts.Force && !opts.RewriteOnly {
 		article, err := r.cache.LoadArticle(media.ID)
 		if err != nil {
 			return nil, err
