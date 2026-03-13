@@ -19,11 +19,21 @@ import (
 	"odin-writer/internal/writer/claude"
 )
 
+const usage = `usage: odin-writer <command> [flags]
+
+Commands:
+  run          Process a media source and publish to Sanity
+  status       Show recent processing history
+  cache        Manage cached transcripts and articles
+
+Run "odin-writer <command> -h" for command-specific help.
+`
+
 func main() {
 	log.SetFlags(0)
 
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: odin-writer <run> [flags]")
+		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
 	}
 
@@ -35,8 +45,12 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		runCmd(os.Args[2:], envFile)
+	case "status":
+		statusCmd(os.Args[2:], envFile)
+	case "cache":
+		cacheCmd(os.Args[2:], envFile)
 	case "-h", "--help", "help":
-		fmt.Println("usage: odin-writer run [flags]")
+		fmt.Fprint(os.Stdout, usage)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		os.Exit(1)
@@ -77,6 +91,81 @@ func runCmd(args []string, envFile string) {
 
 	if err := runner.Run(context.Background(), opts); err != nil {
 		log.Fatalf("error: %v", err)
+	}
+}
+
+func statusCmd(args []string, envFile string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	n := fs.Int("n", 10, "number of recent entries to show")
+	fs.Parse(args)
+
+	cfg := mustLoadConfig(envFile)
+	stateManager := state.New(cfg.StateFile)
+
+	entries, err := stateManager.Recent(*n)
+	if err != nil {
+		log.Fatalf("error reading state: %v", err)
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("no processed articles yet")
+		return
+	}
+
+	fmt.Printf("%-12s  %-26s  %s\n", "media ID", "processed at", "title")
+	fmt.Println("------------  --------------------------  -----")
+	for _, e := range entries {
+		fmt.Printf("%-12s  %-26s  %s\n",
+			e.MediaID,
+			e.ProcessedAt.Format("2006-01-02 15:04:05 MST"),
+			e.ArticleTitle,
+		)
+	}
+}
+
+func cacheCmd(args []string, envFile string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: odin-writer cache <list|clear> [flags]")
+		os.Exit(1)
+	}
+
+	cfg := mustLoadConfig(envFile)
+	cacheManager := cache.New(cfg.CacheDir)
+
+	switch args[0] {
+	case "list":
+		entries, err := cacheManager.List()
+		if err != nil {
+			log.Fatalf("error listing cache: %v", err)
+		}
+		if len(entries) == 0 {
+			fmt.Println("cache is empty")
+			return
+		}
+		for _, id := range entries {
+			fmt.Println(id)
+		}
+
+	case "clear":
+		fs := flag.NewFlagSet("cache clear", flag.ExitOnError)
+		id := fs.String("id", "", "media ID to clear (omit to clear all)")
+		fs.Parse(args[1:])
+
+		if *id == "" {
+			if err := cacheManager.ClearAll(); err != nil {
+				log.Fatalf("error clearing cache: %v", err)
+			}
+			fmt.Println("cache cleared")
+		} else {
+			if err := cacheManager.Clear(*id); err != nil {
+				log.Fatalf("error clearing cache for %s: %v", *id, err)
+			}
+			fmt.Printf("cache cleared for %s\n", *id)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown cache subcommand: %s\n", args[0])
+		os.Exit(1)
 	}
 }
 
