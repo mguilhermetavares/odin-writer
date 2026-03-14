@@ -28,9 +28,14 @@ func (s *Source) Prepare(ctx context.Context, opts source.Options, destDir strin
 	}
 
 	videoID := opts.VideoID
-	title := opts.VideoID // fallback title
+	title := opts.VideoID // fallback: video ID itself
 
-	if videoID == "" {
+	if videoID != "" {
+		// Fetch real title for specific video IDs; non-fatal on error
+		if meta, err := s.videoMetadata(ctx, videoID); err == nil {
+			title = meta.title
+		}
+	} else if videoID == "" {
 		if s.channelID == "" {
 			return nil, fmt.Errorf("YOUTUBE_CHANNEL_ID is required for auto mode")
 		}
@@ -58,6 +63,30 @@ func (s *Source) Prepare(ctx context.Context, opts source.Options, destDir strin
 type videoMeta struct {
 	id    string
 	title string
+}
+
+// videoMetadata fetches the title for a specific video ID.
+func (s *Source) videoMetadata(ctx context.Context, videoID string) (*videoMeta, error) {
+	url := "https://www.youtube.com/watch?v=" + videoID
+	out, err := exec.CommandContext(ctx,
+		"yt-dlp",
+		"--print", "%(id)s\t%(title)s",
+		"--no-warnings",
+		"--quiet",
+		"--no-download",
+		url,
+	).Output()
+	if err != nil {
+		return nil, fmt.Errorf("yt-dlp metadata: %w", err)
+	}
+
+	line := strings.TrimSpace(string(out))
+	parts := strings.SplitN(line, "\t", 2)
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
+	}
+
+	return &videoMeta{id: parts[0], title: parts[1]}, nil
 }
 
 func (s *Source) latestVideo(ctx context.Context) (*videoMeta, error) {
