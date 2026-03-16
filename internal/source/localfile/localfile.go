@@ -31,7 +31,9 @@ func (s *Source) Prepare(_ context.Context, opts source.Options, _ string) (*sou
 	if err != nil {
 		return nil, fmt.Errorf("file not found: %s", opts.Path)
 	}
-	_ = info
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory, not a file", opts.Path)
+	}
 
 	id, err := fileID(opts.Path)
 	if err != nil {
