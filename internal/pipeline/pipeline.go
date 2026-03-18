@@ -119,7 +119,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 		ProcessedAt:  time.Now().UTC(),
 		ArticleTitle: article.Title,
 	}); err != nil {
-		return fmt.Errorf("saving state: %w", err)
+		log.Printf("warning: failed to save state: %v", err)
 	}
 
 	log.Println("done!")
