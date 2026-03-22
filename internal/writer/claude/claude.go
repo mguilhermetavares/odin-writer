@@ -10,6 +10,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
+	"odin-writer/internal/style"
 	"odin-writer/internal/writer"
 )
 
@@ -17,26 +18,27 @@ type Writer struct {
 	client          *anthropic.Client
 	model           string
 	transcriptLimit int
+	style           *style.Style
 }
 
-func New(apiKey, model string, transcriptLimit int) *Writer {
+func New(apiKey, model string, transcriptLimit int, s *style.Style) *Writer {
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
 	return &Writer{
 		client:          &client,
 		model:           model,
 		transcriptLimit: transcriptLimit,
+		style:           s,
 	}
 }
 
 // GenerateArticle sends the transcript to Claude and parses the JSON article response.
 func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle string) (*writer.Article, error) {
-	excerpt := transcript
-	if len(excerpt) > w.transcriptLimit {
-		log.Printf("  warning: transcript truncated from %d to %d chars", len(excerpt), w.transcriptLimit)
-		excerpt = excerpt[:w.transcriptLimit]
+	if len(transcript) > w.transcriptLimit {
+		log.Printf("  warning: transcript truncated from %d to %d chars", len(transcript), w.transcriptLimit)
+		transcript = transcript[:w.transcriptLimit]
 	}
 
-	prompt := w.buildPrompt(excerpt, mediaTitle)
+	prompt := w.buildPrompt(transcript, mediaTitle)
 
 	resp, err := w.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(w.model),
@@ -64,44 +66,43 @@ func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle str
 	return parseArticleJSON(text)
 }
 
-func (w *Writer) buildPrompt(transcript, videoTitle string) string {
-	return fmt.Sprintf(`Você é um redator esportivo especialista em NFL e Minnesota Vikings, escrevendo para o Minnesota Vikings BR, o maior fansite brasileiro do time.
+func (w *Writer) buildPrompt(transcript, mediaTitle string) string {
+	s := w.style
+	var b strings.Builder
 
-Com base na transcrição abaixo de um episódio do podcast "Minnesota Vikings BR", escreva um artigo em português do Brasil que reproduza fielmente o conteúdo discutido.
+	b.WriteString(s.Persona)
+	b.WriteString("\n\n")
 
-Título original do episódio: %s
+	fmt.Fprintf(&b, "Com base na transcrição abaixo, escreva um artigo em %s que reproduza fielmente o conteúdo discutido.\n\n", s.Language)
+	fmt.Fprintf(&b, "Título original: %s\n\n", mediaTitle)
+	fmt.Fprintf(&b, "Transcrição:\n%s\n\n---\n\n", transcript)
 
-Transcrição:
-%s
+	b.WriteString("Retorne SOMENTE um JSON válido com esta estrutura (sem markdown, sem `json`):\n")
+	b.WriteString("{\n")
+	b.WriteString("  \"title\": \"título criativo e jornalístico (não repita o título original)\",\n")
+	b.WriteString("  \"excerpt\": \"resumo em 2-3 frases apresentando o tema central do artigo\",\n")
+	b.WriteString("  \"body\": [\n")
+	b.WriteString("    \"parágrafo 1\",\n")
+	b.WriteString("    \"parágrafo 2\",\n")
+	b.WriteString("    \"...\"\n")
+	b.WriteString("  ]\n")
+	b.WriteString("}\n\n")
 
----
+	fmt.Fprintf(&b, "Estrutura: %s\n", s.Structure)
+	fmt.Fprintf(&b, "Tamanho: %s\n", s.WordCount)
+	fmt.Fprintf(&b, "Tom: %s\n\n", s.Tone)
 
-Retorne SOMENTE um JSON válido com esta estrutura (sem markdown, sem `+"`"+`json`+"`"+`):
-{
-  "title": "título criativo e jornalístico (não repita o título do episódio)",
-  "excerpt": "resumo em 2-3 frases apresentando o tema central do artigo",
-  "body": [
-    "parágrafo 1",
-    "parágrafo 2",
-    "..."
-  ]
-}
+	b.WriteString("Diretrizes de conteúdo:\n")
+	for _, r := range s.ContentRules {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
 
-Diretrizes de conteúdo:
-- O artigo deve refletir fielmente o que foi discutido no podcast — as opiniões e análises são dos apresentadores, não suas
-- Não invente argumentos, posições ou informações que não estejam na transcrição
-- Não mencione o podcast, os apresentadores ou o programa dentro do texto — escreva como artigo independente
-- Estrutura: lide forte (o quê e por que importa), desenvolvimento dos temas principais, conclusão
-- Tamanho: 800 a 1.200 palavras, entre 7 e 9 parágrafos
-- Cada parágrafo deve desenvolver uma ideia de forma fluida, sem enumerar tópicos em sequência
+	b.WriteString("\nDiretrizes de estilo:\n")
+	for _, r := range s.StyleRules {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
 
-Diretrizes de estilo:
-- Tom: técnico, direto e apaixonado, no estilo do The Playoffs e da ESPN Brasil
-- Termos técnicos da NFL em inglês sem tradução: QB, WR, RB, TE, OL, DL, LB, CB, blitz, sack, snap, draft, touchdown, field goal, red zone, first down, playoff, wildcard, bye week
-- Jardas podem ser usadas normalmente em português
-- Proibido usar travessão (—) em qualquer parte do texto
-- Sem bullet points ou listas no corpo do artigo
-- Linguagem para fãs experientes: não explique conceitos básicos`, videoTitle, transcript)
+	return b.String()
 }
 
 type articleJSON struct {

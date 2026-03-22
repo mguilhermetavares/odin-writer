@@ -18,6 +18,7 @@ import (
 	"odin-writer/internal/source/localfile"
 	"odin-writer/internal/source/youtube"
 	"odin-writer/internal/state"
+	"odin-writer/internal/style"
 	"odin-writer/internal/transcriber/groq"
 	"odin-writer/internal/writer/claude"
 )
@@ -75,15 +76,8 @@ func runCmd(args []string, envFile string) {
 	fs.Parse(args)
 
 	cfg := mustLoadConfig(envFile)
-
-	cacheManager := cache.New(cfg.CacheDir)
-	stateManager := state.New(cfg.StateFile)
-	transcriber := groq.New(cfg.GroqAPIKey)
-	articleWriter := claude.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, cfg.TranscriptLimit)
-	pub := sanity.New(cfg.SanityProjectID, cfg.SanityDataset, cfg.SanityToken)
-
 	src := buildSource(cfg, *srcType)
-	runner := pipeline.NewRunner(src, transcriber, articleWriter, pub, cacheManager, stateManager)
+	runner := mustBuildRunner(cfg, src)
 
 	opts := pipeline.RunOptions{
 		Source:      *srcType,
@@ -117,14 +111,8 @@ func serverCmd(args []string, envFile string) {
 		log.Fatal("server mode requires YOUTUBE_CHANNEL_ID")
 	}
 
-	cacheManager := cache.New(cfg.CacheDir)
-	stateManager := state.New(cfg.StateFile)
-	transcriber := groq.New(cfg.GroqAPIKey)
-	articleWriter := claude.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, cfg.TranscriptLimit)
-	pub := sanity.New(cfg.SanityProjectID, cfg.SanityDataset, cfg.SanityToken)
 	src := youtube.New(cfg.YouTubeChannelID)
-
-	runner := pipeline.NewRunner(src, transcriber, articleWriter, pub, cacheManager, stateManager)
+	runner := mustBuildRunner(cfg, src)
 	srv := server.New(runner, cfg.PollInterval)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -206,6 +194,28 @@ func cacheCmd(args []string, envFile string) {
 		fmt.Fprintf(os.Stderr, "unknown cache subcommand: %s\n", args[0])
 		os.Exit(1)
 	}
+}
+
+func mustBuildRunner(cfg *config.Config, src source.Source) *pipeline.Runner {
+	s := mustLoadStyle(cfg.StyleName)
+	articleWriter := claude.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, cfg.TranscriptLimit, s)
+	return pipeline.NewRunner(
+		src,
+		groq.New(cfg.GroqAPIKey),
+		articleWriter,
+		sanity.New(cfg.SanityProjectID, cfg.SanityDataset, cfg.SanityToken),
+		cache.New(cfg.CacheDir),
+		state.New(cfg.StateFile),
+	)
+}
+
+func mustLoadStyle(name string) *style.Style {
+	s, err := style.Get(name)
+	if err != nil {
+		log.Fatalf("style error: %v", err)
+	}
+	log.Printf("  style: %s", s.Name)
+	return s
 }
 
 func buildSource(cfg *config.Config, srcType string) source.Source {

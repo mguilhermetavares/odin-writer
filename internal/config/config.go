@@ -22,6 +22,7 @@ type Config struct {
 	ClaudeModel      string
 	TranscriptLimit  int
 	PollInterval     time.Duration
+	StyleName        string
 }
 
 func Load(envFile string) (*Config, error) {
@@ -48,6 +49,7 @@ func Load(envFile string) (*Config, error) {
 		ClaudeModel:     getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),
 		TranscriptLimit: getEnvInt("TRANSCRIPT_LIMIT", 150000),
 		PollInterval:    getEnvDuration("POLL_INTERVAL", 24*time.Hour),
+		StyleName:       getEnvOrDefault("STYLE", "esportivo"),
 	}
 
 	if err := cfg.validate(); err != nil {
