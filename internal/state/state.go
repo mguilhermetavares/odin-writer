@@ -57,6 +57,23 @@ func (m *Manager) WasProcessed(mediaID string) (bool, error) {
 	return false, nil
 }
 
+// Recent returns up to n entries, most recent first.
+func (m *Manager) Recent(n int) ([]Entry, error) {
+	s, err := m.load()
+	if err != nil {
+		return nil, err
+	}
+	entries := s.Entries
+	if len(entries) > n {
+		entries = entries[len(entries)-n:]
+	}
+	// Reverse so most recent is first
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	return entries, nil
+}
+
 // Record appends a new entry to the state file.
 func (m *Manager) Record(entry Entry) error {
 	s, err := m.load()
