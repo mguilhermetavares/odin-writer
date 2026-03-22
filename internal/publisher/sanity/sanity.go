@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	"odin-writer/internal/httpclient"
 	"odin-writer/internal/writer"
 )
 
@@ -28,7 +29,7 @@ func New(projectID, dataset, token string) *Publisher {
 		projectID: projectID,
 		dataset:   dataset,
 		token:     token,
-		client:    &http.Client{},
+		client:    httpclient.New(),
 	}
 }
 

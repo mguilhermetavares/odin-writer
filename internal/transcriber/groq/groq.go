@@ -11,13 +11,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+
+	"odin-writer/internal/httpclient"
 )
 
 const (
 	transcriptionURL = "https://api.groq.com/openai/v1/audio/transcriptions"
 	maxBytes         = 25 * 1024 * 1024 // 25MB Groq limit
 	segmentSeconds   = 600              // 10-minute segments
+	maxConcurrent    = 3                // max parallel Groq requests
 )
 
 type Transcriber struct {
@@ -28,7 +33,7 @@ type Transcriber struct {
 func New(apiKey string) *Transcriber {
 	return &Transcriber{
 		apiKey: apiKey,
-		client: &http.Client{},
+		client: httpclient.New(),
 	}
 }
 
@@ -132,16 +137,38 @@ func (t *Transcriber) transcribeSegmented(ctx context.Context, audioPath string)
 	if err != nil || len(segments) == 0 {
 		return "", fmt.Errorf("no segments created by ffmpeg")
 	}
+	sort.Strings(segments)
 
-	// Sort segments (glob returns them sorted alphabetically)
-	var parts []string
+	type result struct {
+		index int
+		text  string
+		err   error
+	}
+
+	results := make([]result, len(segments))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
 	for i, seg := range segments {
-		fmt.Printf("  transcribing segment %d/%d...\n", i+1, len(segments))
-		text, err := t.transcribeFile(ctx, seg)
-		if err != nil {
-			return "", fmt.Errorf("segment %d: %w", i+1, err)
+		wg.Add(1)
+		go func(idx int, path string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			fmt.Printf("  transcribing segment %d/%d...\n", idx+1, len(segments))
+			text, err := t.transcribeFile(ctx, path)
+			results[idx] = result{index: idx, text: text, err: err}
+		}(i, seg)
+	}
+	wg.Wait()
+
+	parts := make([]string, len(segments))
+	for _, r := range results {
+		if r.err != nil {
+			return "", fmt.Errorf("segment %d: %w", r.index+1, r.err)
 		}
-		parts = append(parts, text)
+		parts[r.index] = r.text
 	}
 
 	return strings.Join(parts, " "), nil
