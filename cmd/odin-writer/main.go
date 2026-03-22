@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"odin-writer/internal/cache"
 	"odin-writer/internal/config"
 	"odin-writer/internal/pipeline"
 	"odin-writer/internal/publisher/sanity"
+	"odin-writer/internal/server"
 	"odin-writer/internal/source"
 	"odin-writer/internal/source/localfile"
 	"odin-writer/internal/source/youtube"
@@ -23,6 +26,7 @@ const usage = `usage: odin-writer <command> [flags]
 
 Commands:
   run          Process a media source and publish to Sanity
+  server       Poll YouTube for new videos and run the pipeline automatically
   status       Show recent processing history
   cache        Manage cached transcripts and articles
 
@@ -45,6 +49,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		runCmd(os.Args[2:], envFile)
+	case "server":
+		serverCmd(os.Args[2:], envFile)
 	case "status":
 		statusCmd(os.Args[2:], envFile)
 	case "cache":
@@ -92,6 +98,39 @@ func runCmd(args []string, envFile string) {
 	if err := runner.Run(context.Background(), opts); err != nil {
 		log.Fatalf("error: %v", err)
 	}
+}
+
+func serverCmd(args []string, envFile string) {
+	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: odin-writer server [flags]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Polls YouTube for new videos and runs the full pipeline automatically.")
+		fmt.Fprintln(os.Stderr, "Interval is controlled by POLL_INTERVAL env var (default: 24h).")
+		fmt.Fprintln(os.Stderr, "")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	cfg := mustLoadConfig(envFile)
+	if cfg.YouTubeChannelID == "" {
+		log.Fatal("server mode requires YOUTUBE_CHANNEL_ID")
+	}
+
+	cacheManager := cache.New(cfg.CacheDir)
+	stateManager := state.New(cfg.StateFile)
+	transcriber := groq.New(cfg.GroqAPIKey)
+	articleWriter := claude.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, cfg.TranscriptLimit)
+	pub := sanity.New(cfg.SanityProjectID, cfg.SanityDataset, cfg.SanityToken)
+	src := youtube.New(cfg.YouTubeChannelID)
+
+	runner := pipeline.NewRunner(src, transcriber, articleWriter, pub, cacheManager, stateManager)
+	srv := server.New(runner, cfg.PollInterval)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	srv.Run(ctx)
 }
 
 func statusCmd(args []string, envFile string) {

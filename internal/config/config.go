@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -20,6 +21,7 @@ type Config struct {
 	CacheDir         string
 	ClaudeModel      string
 	TranscriptLimit  int
+	PollInterval     time.Duration
 }
 
 func Load(envFile string) (*Config, error) {
@@ -45,6 +47,7 @@ func Load(envFile string) (*Config, error) {
 		CacheDir:         getEnvOrDefault("CACHE_DIR", filepath.Join(home, "cache")),
 		ClaudeModel:     getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),
 		TranscriptLimit: getEnvInt("TRANSCRIPT_LIMIT", 150000),
+		PollInterval:    getEnvDuration("POLL_INTERVAL", 24*time.Hour),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -84,6 +87,15 @@ func getEnvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
+		}
+	}
+	return def
+}
+
+func getEnvDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
 		}
 	}
 	return def
