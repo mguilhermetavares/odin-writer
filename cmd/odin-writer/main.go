@@ -73,9 +73,13 @@ func runCmd(args []string, envFile string) {
 	force := fs.Bool("force", false, "ignore state and cache")
 	dryRun := fs.Bool("dry-run", false, "run without publishing to Sanity")
 	rewriteOnly := fs.Bool("rewrite-only", false, "regenerate article from cached transcript")
+	styleFlag := fs.String("style", "", "style name or path to a JSON style file (overrides STYLE env var)")
 	fs.Parse(args)
 
 	cfg := mustLoadConfig(envFile)
+	if *styleFlag != "" {
+		cfg.StyleName = *styleFlag
+	}
 	src := buildSource(cfg, *srcType)
 	runner := mustBuildRunner(cfg, src)
 
@@ -96,6 +100,7 @@ func runCmd(args []string, envFile string) {
 
 func serverCmd(args []string, envFile string) {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	styleFlag := fs.String("style", "", "style name or path to a JSON style file (overrides STYLE env var)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: odin-writer server [flags]")
 		fmt.Fprintln(os.Stderr, "")
@@ -107,6 +112,9 @@ func serverCmd(args []string, envFile string) {
 	fs.Parse(args)
 
 	cfg := mustLoadConfig(envFile)
+	if *styleFlag != "" {
+		cfg.StyleName = *styleFlag
+	}
 	if cfg.YouTubeChannelID == "" {
 		log.Fatal("server mode requires YOUTUBE_CHANNEL_ID")
 	}
@@ -209,8 +217,8 @@ func mustBuildRunner(cfg *config.Config, src source.Source) *pipeline.Runner {
 	)
 }
 
-func mustLoadStyle(name string) *style.Style {
-	s, err := style.Get(name)
+func mustLoadStyle(nameOrPath string) *style.Style {
+	s, err := style.Resolve(nameOrPath)
 	if err != nil {
 		log.Fatalf("style error: %v", err)
 	}
