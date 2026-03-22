@@ -1,6 +1,8 @@
 # odin-writer
 
-CLI em Go que gera artigos jornalísticos a partir de episódios de podcast ou vídeos do YouTube.
+CLI em Go que converte automaticamente episódios de podcast e vídeos do YouTube em texto escrito para websites.
+
+A proposta não é criar conteúdo do zero, mas transformar o que já existe em formato áudio/visual em uma versão escrita e publicável — resumindo fielmente o conteúdo original de forma estruturada e automatizada.
 
 ## Como funciona
 
@@ -10,7 +12,7 @@ Source → Transcribe → Write → Publish
 
 1. **Source** — identifica e baixa o áudio (YouTube via yt-dlp, ou arquivo local)
 2. **Transcribe** — transcreve o áudio com Groq Whisper (segmentos paralelos para arquivos grandes)
-3. **Write** — gera o artigo com Claude (Anthropic), seguindo o estilo configurado
+3. **Write** — resume a transcrição em um artigo com Claude (Anthropic), seguindo o estilo configurado
 4. **Publish** — cria um rascunho no Sanity CMS
 
 Transcrições e artigos são guardados em cache por ID de mídia. Rodar duas vezes para o mesmo episódio não gera custo extra.
