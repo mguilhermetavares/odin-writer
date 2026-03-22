@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -31,6 +32,7 @@ func New(apiKey, model string, transcriptLimit int) *Writer {
 func (w *Writer) GenerateArticle(ctx context.Context, transcript, mediaTitle string) (*writer.Article, error) {
 	excerpt := transcript
 	if len(excerpt) > w.transcriptLimit {
+		log.Printf("  warning: transcript truncated from %d to %d chars", len(excerpt), w.transcriptLimit)
 		excerpt = excerpt[:w.transcriptLimit]
 	}
 

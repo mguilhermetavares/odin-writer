@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -42,8 +43,8 @@ func Load(envFile string) (*Config, error) {
 		YouTubeChannelID: os.Getenv("YOUTUBE_CHANNEL_ID"),
 		StateFile:        getEnvOrDefault("STATE_FILE", filepath.Join(home, "state.json")),
 		CacheDir:         getEnvOrDefault("CACHE_DIR", filepath.Join(home, "cache")),
-		ClaudeModel:      getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),
-		TranscriptLimit:  15000,
+		ClaudeModel:     getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),
+		TranscriptLimit: getEnvInt("TRANSCRIPT_LIMIT", 150000),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -75,6 +76,15 @@ func (c *Config) validate() error {
 func getEnvOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func getEnvInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
 	}
 	return def
 }
