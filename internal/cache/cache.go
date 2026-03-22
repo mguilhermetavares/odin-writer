@@ -100,3 +100,8 @@ func (m *Manager) List() ([]string, error) {
 func (m *Manager) Clear(mediaID string) error {
 	return os.RemoveAll(m.mediaDir(mediaID))
 }
+
+// ClearAll removes the entire cache directory.
+func (m *Manager) ClearAll() error {
+	return os.RemoveAll(m.dir)
+}
