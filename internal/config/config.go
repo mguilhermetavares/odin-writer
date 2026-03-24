@@ -17,6 +17,7 @@ type Config struct {
 	AnthropicAPIKey  string
 	GroqAPIKey       string
 	YouTubeChannelID string
+	HomeDir          string
 	StateFile        string
 	CacheDir         string
 	ClaudeModel      string
@@ -44,6 +45,7 @@ func Load(envFile string) (*Config, error) {
 		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		GroqAPIKey:       os.Getenv("GROQ_API_KEY"),
 		YouTubeChannelID: os.Getenv("YOUTUBE_CHANNEL_ID"),
+		HomeDir:          home,
 		StateFile:        getEnvOrDefault("STATE_FILE", filepath.Join(home, "state.json")),
 		CacheDir:         getEnvOrDefault("CACHE_DIR", filepath.Join(home, "cache")),
 		ClaudeModel:     getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),

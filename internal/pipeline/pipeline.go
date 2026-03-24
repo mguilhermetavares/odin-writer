@@ -67,6 +67,13 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 	}
 	log.Printf("  media: [%s] %s", media.ID, media.Title)
 
+	// Warn if the file is long and we're not already detached
+	const largeFileSecs = 3600
+	if media.DurationSec > largeFileSecs && !opts.Background {
+		log.Printf("  warning: video is %.0f min — consider running with --background to avoid interruption",
+			float64(media.DurationSec)/60)
+	}
+
 	// 2. Check state (skip if already processed, unless --force or --rewrite-only)
 	if !opts.Force && !opts.RewriteOnly {
 		processed, err := r.state.WasProcessed(media.ID)

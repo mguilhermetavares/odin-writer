@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"odin-writer/internal/cache"
 	"odin-writer/internal/config"
@@ -74,12 +77,19 @@ func runCmd(args []string, envFile string) {
 	dryRun := fs.Bool("dry-run", false, "run without publishing to Sanity")
 	rewriteOnly := fs.Bool("rewrite-only", false, "regenerate article from cached transcript")
 	styleFlag := fs.String("style", "", "style name or path to a JSON style file (overrides STYLE env var)")
+	background := fs.Bool("background", false, "run detached in background, writing output to ODIN_WRITER_HOME/logs/")
 	fs.Parse(args)
 
 	cfg := mustLoadConfig(envFile)
 	if *styleFlag != "" {
 		cfg.StyleName = *styleFlag
 	}
+
+	if *background {
+		spawnBackground(cfg, args)
+		return
+	}
+
 	src := buildSource(cfg, *srcType)
 	runner := mustBuildRunner(cfg, src)
 
@@ -91,11 +101,57 @@ func runCmd(args []string, envFile string) {
 		Force:       *force,
 		DryRun:      *dryRun,
 		RewriteOnly: *rewriteOnly,
+		Background:  false,
 	}
 
 	if err := runner.Run(context.Background(), opts); err != nil {
 		log.Fatalf("error: %v", err)
 	}
+}
+
+// spawnBackground re-execs the current binary without --background, detached
+// from the terminal, with stdout/stderr redirected to a timestamped log file.
+func spawnBackground(cfg *config.Config, args []string) {
+	logsDir := filepath.Join(cfg.HomeDir, "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		log.Fatalf("creating logs dir: %v", err)
+	}
+
+	timestamp := time.Now().Format("20060102-150405")
+	logPath := filepath.Join(logsDir, "odin-writer-"+timestamp+".log")
+
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		log.Fatalf("creating log file: %v", err)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatalf("finding executable path: %v", err)
+	}
+
+	// Rebuild args without --background / -background
+	childArgs := []string{"run"}
+	for _, a := range args {
+		if a == "--background" || a == "-background" {
+			continue
+		}
+		childArgs = append(childArgs, a)
+	}
+
+	cmd := exec.Command(exe, childArgs...)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Stdin = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		log.Fatalf("starting background process: %v", err)
+	}
+	logFile.Close()
+
+	fmt.Printf("running in background\n  PID: %d\n  log: %s\n", cmd.Process.Pid, logPath)
 }
 
 func serverCmd(args []string, envFile string) {

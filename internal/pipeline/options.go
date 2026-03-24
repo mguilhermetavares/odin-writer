@@ -23,4 +23,7 @@ type RunOptions struct {
 	// RewriteOnly loads the transcript from cache, regenerates the article,
 	// and skips publishing. Requires a cached transcript.
 	RewriteOnly bool
+
+	// Background indicates the process is running detached (suppress the large-file warning).
+	Background bool
 }
