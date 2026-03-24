@@ -157,7 +157,7 @@ func (r *Runner) transcribe(ctx context.Context, media *source.Media, opts RunOp
 	}
 
 	log.Printf("  transcribing via Groq Whisper: %s", media.AudioPath)
-	transcript, err := r.transcriber.Transcribe(ctx, media.AudioPath)
+	transcript, err := r.transcriber.Transcribe(ctx, media.AudioPath, media.DurationSec)
 	if err != nil {
 		return "", fmt.Errorf("transcription: %w", err)
 	}

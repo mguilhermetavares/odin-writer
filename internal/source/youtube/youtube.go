@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"odin-writer/internal/source"
@@ -29,11 +30,13 @@ func (s *Source) Prepare(ctx context.Context, opts source.Options, destDir strin
 
 	videoID := opts.VideoID
 	title := opts.VideoID // fallback: video ID itself
+	var durationSec int
 
 	if videoID != "" {
-		// Fetch real title for specific video IDs; non-fatal on error
+		// Fetch real title and duration for specific video IDs; non-fatal on error
 		if meta, err := s.videoMetadata(ctx, videoID); err == nil {
 			title = meta.title
+			durationSec = meta.durationSec
 		}
 	} else if videoID == "" {
 		if s.channelID == "" {
@@ -45,6 +48,7 @@ func (s *Source) Prepare(ctx context.Context, opts source.Options, destDir strin
 		}
 		videoID = meta.id
 		title = meta.title
+		durationSec = meta.durationSec
 	}
 
 	audioPath, err := s.downloadAudio(ctx, videoID, destDir)
@@ -53,25 +57,27 @@ func (s *Source) Prepare(ctx context.Context, opts source.Options, destDir strin
 	}
 
 	return &source.Media{
-		ID:        videoID,
-		Title:     title,
-		AudioPath: audioPath,
-		SourceID:  "youtube",
+		ID:          videoID,
+		Title:       title,
+		AudioPath:   audioPath,
+		SourceID:    "youtube",
+		DurationSec: durationSec,
 	}, nil
 }
 
 type videoMeta struct {
-	id         string
-	title      string
-	uploadDate string // YYYYMMDD
+	id          string
+	title       string
+	uploadDate  string // YYYYMMDD
+	durationSec int    // total duration in seconds (0 if unknown)
 }
 
-// videoMetadata fetches the title for a specific video ID.
+// videoMetadata fetches metadata for a specific video ID.
 func (s *Source) videoMetadata(ctx context.Context, videoID string) (*videoMeta, error) {
 	url := "https://www.youtube.com/watch?v=" + videoID
 	out, err := exec.CommandContext(ctx,
 		"yt-dlp",
-		"--print", "%(id)s\t%(title)s\t%(upload_date)s",
+		"--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(duration)s",
 		"--no-warnings",
 		"--quiet",
 		"--no-download",
@@ -82,14 +88,17 @@ func (s *Source) videoMetadata(ctx context.Context, videoID string) (*videoMeta,
 	}
 
 	line := strings.TrimSpace(string(out))
-	parts := strings.SplitN(line, "\t", 3)
+	parts := strings.SplitN(line, "\t", 4)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
 	}
 
 	meta := &videoMeta{id: parts[0], title: parts[1]}
-	if len(parts) == 3 {
+	if len(parts) >= 3 {
 		meta.uploadDate = parts[2]
+	}
+	if len(parts) == 4 {
+		meta.durationSec, _ = strconv.Atoi(parts[3])
 	}
 	return meta, nil
 }
@@ -100,7 +109,7 @@ func (s *Source) fetchLatestFrom(ctx context.Context, url string) (*videoMeta, e
 	out, err := exec.CommandContext(ctx,
 		"yt-dlp",
 		"--playlist-end", "1",
-		"--print", "%(id)s\t%(title)s\t%(upload_date)s",
+		"--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(duration)s",
 		"--no-warnings",
 		"--quiet",
 		url,
@@ -110,14 +119,17 @@ func (s *Source) fetchLatestFrom(ctx context.Context, url string) (*videoMeta, e
 	}
 
 	line := strings.TrimSpace(string(out))
-	parts := strings.SplitN(line, "\t", 3)
+	parts := strings.SplitN(line, "\t", 4)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
 	}
 
 	meta := &videoMeta{id: parts[0], title: parts[1]}
-	if len(parts) == 3 {
+	if len(parts) >= 3 {
 		meta.uploadDate = parts[2]
+	}
+	if len(parts) == 4 {
+		meta.durationSec, _ = strconv.Atoi(parts[3])
 	}
 	return meta, nil
 }

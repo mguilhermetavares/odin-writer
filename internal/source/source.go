@@ -5,10 +5,11 @@ import "context"
 // Media represents a piece of media ready to be transcribed.
 // AudioPath points to the audio file on disk (may be a temp file for YouTube).
 type Media struct {
-	ID        string // video ID, file hash, etc.
-	Title     string
-	AudioPath string
-	SourceID  string // "youtube", "localfile"
+	ID          string // video ID, file hash, etc.
+	Title       string
+	AudioPath   string
+	SourceID    string // "youtube", "localfile"
+	DurationSec int    // total audio duration in seconds (0 if unknown)
 }
 
 // Options controls how a source fetches media.
