@@ -61,8 +61,9 @@ func (s *Source) Prepare(ctx context.Context, opts source.Options, destDir strin
 }
 
 type videoMeta struct {
-	id    string
-	title string
+	id         string
+	title      string
+	uploadDate string // YYYYMMDD
 }
 
 // videoMetadata fetches the title for a specific video ID.
@@ -70,7 +71,7 @@ func (s *Source) videoMetadata(ctx context.Context, videoID string) (*videoMeta,
 	url := "https://www.youtube.com/watch?v=" + videoID
 	out, err := exec.CommandContext(ctx,
 		"yt-dlp",
-		"--print", "%(id)s\t%(title)s",
+		"--print", "%(id)s\t%(title)s\t%(upload_date)s",
 		"--no-warnings",
 		"--quiet",
 		"--no-download",
@@ -81,35 +82,74 @@ func (s *Source) videoMetadata(ctx context.Context, videoID string) (*videoMeta,
 	}
 
 	line := strings.TrimSpace(string(out))
-	parts := strings.SplitN(line, "\t", 2)
+	parts := strings.SplitN(line, "\t", 3)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
 	}
 
-	return &videoMeta{id: parts[0], title: parts[1]}, nil
+	meta := &videoMeta{id: parts[0], title: parts[1]}
+	if len(parts) == 3 {
+		meta.uploadDate = parts[2]
+	}
+	return meta, nil
 }
 
-func (s *Source) latestVideo(ctx context.Context) (*videoMeta, error) {
-	url := "https://www.youtube.com/channel/" + s.channelID + "/videos"
+// fetchLatestFrom returns the most recent video from a channel playlist URL.
+// Returns nil (no error) if the playlist is empty or unavailable.
+func (s *Source) fetchLatestFrom(ctx context.Context, url string) (*videoMeta, error) {
 	out, err := exec.CommandContext(ctx,
 		"yt-dlp",
 		"--playlist-end", "1",
-		"--print", "%(id)s\t%(title)s",
+		"--print", "%(id)s\t%(title)s\t%(upload_date)s",
 		"--no-warnings",
 		"--quiet",
 		url,
 	).Output()
-	if err != nil {
-		return nil, fmt.Errorf("yt-dlp: %w", err)
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return nil, nil
 	}
 
 	line := strings.TrimSpace(string(out))
-	parts := strings.SplitN(line, "\t", 2)
+	parts := strings.SplitN(line, "\t", 3)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
 	}
 
-	return &videoMeta{id: parts[0], title: parts[1]}, nil
+	meta := &videoMeta{id: parts[0], title: parts[1]}
+	if len(parts) == 3 {
+		meta.uploadDate = parts[2]
+	}
+	return meta, nil
+}
+
+// latestVideo returns the most recent content from the channel — video or live,
+// whichever was uploaded most recently.
+func (s *Source) latestVideo(ctx context.Context) (*videoMeta, error) {
+	base := "https://www.youtube.com/channel/" + s.channelID
+
+	video, err := s.fetchLatestFrom(ctx, base+"/videos")
+	if err != nil {
+		return nil, fmt.Errorf("fetching latest video: %w", err)
+	}
+
+	live, err := s.fetchLatestFrom(ctx, base+"/streams")
+	if err != nil {
+		return nil, fmt.Errorf("fetching latest stream: %w", err)
+	}
+
+	switch {
+	case video == nil && live == nil:
+		return nil, fmt.Errorf("no videos or streams found for channel %s", s.channelID)
+	case video == nil:
+		return live, nil
+	case live == nil:
+		return video, nil
+	default:
+		if live.uploadDate > video.uploadDate {
+			return live, nil
+		}
+		return video, nil
+	}
 }
 
 func (s *Source) downloadAudio(ctx context.Context, videoID, destDir string) (string, error) {
