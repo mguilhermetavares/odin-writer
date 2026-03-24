@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -442,39 +441,8 @@ func TestTranscribeFile_Success200ReturnsTranscribedText(t *testing.T) {
 	}
 }
 
-// TestTranscribeFile_429WithRetryAfterSleepsAndRetries verifies that a 429
-// response with a short Retry-After causes the client to sleep then retry,
-// and that the second (200) response text is returned.
-func TestTranscribeFile_429WithRetryAfterSleepsAndRetries(t *testing.T) {
-	var callCount atomic.Int32
-	successBody := "retried successfully"
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := callCount.Add(1)
-		if n == 1 {
-			// First call → 429 with a very short wait (1 second for fast tests).
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprint(w, `{"error":{"message":"rate limited"}}`)
-			return
-		}
-		// Second call → 200.
-		fmt.Fprint(w, successBody)
-	}))
-	defer srv.Close()
-
-	audioPath := audioFilePath(t)
-	got, err := transcribeFileViaServer(t, srv, audioPath)
-	if err != nil {
-		t.Fatalf("unexpected error after retry: %v", err)
-	}
-	if got != successBody {
-		t.Errorf("expected %q, got %q", successBody, got)
-	}
-	if callCount.Load() < 2 {
-		t.Errorf("expected at least 2 calls (429 + 200), got %d", callCount.Load())
-	}
-}
+// TestTranscribeFile_429WithRetryAfterSleepsAndRetries is in
+// groq_synctest_test.go (fake time via testing/synctest).
 
 // TestTranscribeFile_Error500ReturnsErrorWithStatusCode verifies that a 500
 // response causes transcribeFile to return a non-nil error containing the

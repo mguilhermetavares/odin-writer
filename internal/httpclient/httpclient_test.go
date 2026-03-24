@@ -69,67 +69,8 @@ func TestSuccessOnFirstAttemptNoRetry(t *testing.T) {
 	}
 }
 
-// TestRetryOn429UntilSuccess verifies that a 429 response triggers retries and
-// that a subsequent 200 is returned successfully.
-func TestRetryOn429UntilSuccess(t *testing.T) {
-	// First two calls return 429, third returns 200.
-	srv, calls := countingServer(t, http.StatusTooManyRequests, http.StatusTooManyRequests, http.StatusOK)
-	defer srv.Close()
-
-	rt := &RetryTransport{base: http.DefaultTransport}
-	resp, err := doGet(t, rt, srv.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("want 200 after retries, got %d", resp.StatusCode)
-	}
-	if got := calls.Load(); got != 3 {
-		t.Errorf("want 3 calls, got %d", got)
-	}
-}
-
-// TestRetryOn500 verifies that a 500 triggers retries.
-func TestRetryOn500(t *testing.T) {
-	srv, calls := countingServer(t, http.StatusInternalServerError, http.StatusInternalServerError, http.StatusOK)
-	defer srv.Close()
-
-	rt := newTestTransport()
-	resp, err := doGet(t, rt, srv.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("want 200 after retries, got %d", resp.StatusCode)
-	}
-	if got := calls.Load(); got != 3 {
-		t.Errorf("want 3 calls, got %d", got)
-	}
-}
-
-// TestRetryOn503 verifies that a 503 triggers retries.
-func TestRetryOn503(t *testing.T) {
-	srv, calls := countingServer(t, http.StatusServiceUnavailable, http.StatusOK)
-	defer srv.Close()
-
-	rt := newTestTransport()
-	resp, err := doGet(t, rt, srv.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("want 200 after retries, got %d", resp.StatusCode)
-	}
-	if got := calls.Load(); got != 2 {
-		t.Errorf("want 2 calls, got %d", got)
-	}
-}
+// Retry tests (429, 500, 503) are in httpclient_synctest_test.go.
+// They use testing/synctest so the backoff sleeps are instant (fake time).
 
 // TestNoRetryOn400 verifies that a 400 is returned immediately without retries.
 func TestNoRetryOn400(t *testing.T) {
@@ -171,35 +112,7 @@ func TestNoRetryOn404(t *testing.T) {
 	}
 }
 
-// TestGivesUpAfterMaxRetriesOn429 verifies that persistent 429 responses cause
-// the transport to exhaust all retries and return the last 429 response.
-func TestGivesUpAfterMaxRetriesOn429(t *testing.T) {
-	srv := statusServer(t, http.StatusTooManyRequests)
-	defer srv.Close()
-
-	var calls atomic.Int64
-	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer counting.Close()
-
-	rt := newTestTransport()
-	resp, err := doGet(t, rt, counting.URL)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("want 429, got %d", resp.StatusCode)
-	}
-	// Initial attempt + maxRetries retries = maxRetries+1 total calls.
-	wantCalls := int64(maxRetries + 1)
-	if got := calls.Load(); got != wantCalls {
-		t.Errorf("want %d calls, got %d", wantCalls, got)
-	}
-}
+// TestGivesUpAfterMaxRetriesOn429 is in httpclient_synctest_test.go.
 
 // TestBackoffGrowsExponentially verifies that successive backoff durations
 // increase with each attempt.
