@@ -51,7 +51,7 @@ brews:
     repository:
       owner: mguilhermetavares
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: "{{ .Env.GORELEASER_HOMEBREW_TAP }}"
     homepage: "https://github.com/mguilhermetavares/odin-writer"
     description: "CLI que converte episódios de podcast e vídeos do YouTube em artigos para websites"
     license: "MIT"
