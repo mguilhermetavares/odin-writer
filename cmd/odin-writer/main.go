@@ -52,7 +52,11 @@ func main() {
 
 	envFile := os.Getenv("ODIN_WRITER_ENV")
 	if envFile == "" {
-		envFile = ".env"
+		if _, err := os.Stat("/etc/odin-writer/.env"); err == nil {
+			envFile = "/etc/odin-writer/.env"
+		} else {
+			envFile = ".env"
+		}
 	}
 
 	switch os.Args[1] {
