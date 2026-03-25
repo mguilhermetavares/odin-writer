@@ -1,7 +1,7 @@
 # odin-writer
 
 <p align="center">
-  <img src=".github/assets/mascot.png" alt="odin-writer mascot" width="160" />
+  <img src="assets/mascot.png" alt="odin-writer mascot" width="160" />
 </p>
 
 <p align="center">
