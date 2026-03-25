@@ -1,29 +1,34 @@
 # odin-writer
 
-CLI em Go que converte automaticamente episódios de podcast e vídeos do YouTube em texto escrito para websites.
+A Go CLI that automatically converts podcast episodes and YouTube videos into written articles for websites.
 
-A proposta não é criar conteúdo do zero, mas transformar o que já existe em formato áudio/visual em uma versão escrita e publicável — resumindo fielmente o conteúdo original de forma estruturada e automatizada.
+The goal is not to create content from scratch, but to transform what already exists in audio/video format into a structured, publishable written version — faithfully summarizing the original content.
 
-## Como funciona
+## How it works
 
 ```
 Source → Transcribe → Write → Publish
 ```
 
-1. **Source** — identifica e baixa o áudio (YouTube via yt-dlp, ou arquivo local)
-2. **Transcribe** — transcreve o áudio com Groq Whisper (segmentos paralelos para arquivos grandes)
-3. **Write** — resume a transcrição em um artigo com Claude (Anthropic), seguindo o estilo configurado
-4. **Publish** — cria um rascunho no Sanity CMS
+1. **Source** — identifies and downloads the audio (YouTube via yt-dlp, or a local file)
+2. **Transcribe** — transcribes audio with Groq Whisper; large files are split into segments automatically
+3. **Write** — summarizes the transcript into an article using Claude (Anthropic), following a configured writing style
+4. **Publish** — creates a draft in Sanity CMS
 
-Transcrições e artigos são guardados em cache por ID de mídia. Rodar duas vezes para o mesmo episódio não gera custo extra.
+Transcripts and articles are cached per media ID. Running the same episode twice has no extra cost.
 
-## Requisitos
+## Installation
 
-- Go 1.25+
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — para source=youtube (`pip install yt-dlp`)
-- [ffmpeg](https://ffmpeg.org/) — para áudios > 25 MB (segmentação antes da transcrição)
+### Homebrew (macOS / Linux)
 
-## Instalação
+```bash
+brew tap mguilhermetavares/tap
+brew install odin-writer
+```
+
+### Build from source
+
+Requires Go 1.25+, [yt-dlp](https://github.com/yt-dlp/yt-dlp), and optionally [ffmpeg](https://ffmpeg.org/).
 
 ```bash
 git clone https://github.com/mguilhermetavares/odin-writer
@@ -31,160 +36,176 @@ cd odin-writer
 go build -o bin/odin-writer ./cmd/odin-writer
 ```
 
-## Configuração
+## Configuration
 
-Copie `.env.example` para `.env` e preencha:
+Copy `.env.example` to `.env` and fill in your credentials:
 
 ```bash
 cp .env.example .env
 ```
 
-| Variável | Obrigatória | Descrição |
-|----------|-------------|-----------|
-| `SANITY_PROJECT_ID` | sim | ID do projeto Sanity |
-| `SANITY_DATASET` | sim | Dataset (ex: `production`) |
-| `SANITY_TOKEN` | sim | Token com role **Editor** |
-| `ANTHROPIC_API_KEY` | sim | Chave da API Anthropic |
-| `GROQ_API_KEY` | sim | Chave da API Groq |
-| `YOUTUBE_CHANNEL_ID` | não | ID do canal YouTube (necessário para source=youtube e server) |
-| `CLAUDE_MODEL` | não | Modelo Claude (padrão: `claude-opus-4-6`) |
-| `ODIN_WRITER_HOME` | não | Diretório base para state e cache (padrão: `/var/odin-writer`) |
-| `STATE_FILE` | não | Caminho do arquivo de estado (padrão: `$ODIN_WRITER_HOME/state.json`) |
-| `CACHE_DIR` | não | Diretório de cache (padrão: `$ODIN_WRITER_HOME/cache`) |
-| `TRANSCRIPT_LIMIT` | não | Limite de caracteres da transcrição enviada ao Claude (padrão: `150000`) |
-| `POLL_INTERVAL` | não | Intervalo de polling do modo server (padrão: `24h`) |
-| `STYLE` | não | Estilo de escrita (padrão: `esportivo`) |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SANITY_PROJECT_ID` | yes | Sanity project ID |
+| `SANITY_DATASET` | yes | Dataset name (e.g. `production`) |
+| `SANITY_TOKEN` | yes | Token with **Editor** role |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key |
+| `GROQ_API_KEY` | yes | Groq API key |
+| `YOUTUBE_CHANNEL_ID` | no | YouTube channel ID (required for `source=youtube` and `server` mode) |
+| `CLAUDE_MODEL` | no | Claude model to use (default: `claude-opus-4-6`) |
+| `ODIN_WRITER_HOME` | no | Base directory for state and cache (default: `/var/odin-writer`) |
+| `TRANSCRIPT_LIMIT` | no | Max characters of transcript sent to Claude (default: `150000`) |
+| `POLL_INTERVAL` | no | Polling interval for server mode (default: `24h`) |
+| `STYLE` | no | Writing style name or path (default: `esportivo`) |
 
-## Uso
+## Usage
 
-### Comando `run`
+### `run`
 
-Processa uma fonte de mídia e publica no Sanity.
+Process a media source and publish to Sanity.
 
 ```bash
-# YouTube: processa o último vídeo do canal configurado
+# YouTube: process the latest video from the configured channel
 odin-writer run
 
-# YouTube: vídeo específico
+# YouTube: specific video
 odin-writer run -video-id VIDEO_ID
 
-# Arquivo local
-odin-writer run -source file -path ep.mp3 -title "Título do episódio"
+# Local file
+odin-writer run -source file -path episode.mp3 -title "Episode title"
 
-# Sem publicar no Sanity (útil para testar)
+# Skip publishing (useful for testing)
 odin-writer run -dry-run
 
-# Forçar reprocessamento (ignora cache e estado)
+# Force reprocessing (ignore cache and state)
 odin-writer run -force
 
-# Regenerar artigo a partir da transcrição em cache (sem publicar)
+# Regenerate article from cached transcript without publishing
 odin-writer run -rewrite-only
 
-# Usar estilo específico
+# Use a specific writing style
 odin-writer run -style esportivo
-odin-writer run -style ./meu-estilo.json
+odin-writer run -style ./my-style.json
+
+# Run detached in the background (logs written to ODIN_WRITER_HOME/logs/)
+odin-writer run -background
 ```
 
-### Comando `server`
+> **Tip:** videos longer than 1 hour will show a warning suggesting `-background`.
 
-Polling contínuo do YouTube — verifica novos vídeos no intervalo configurado e executa a esteira completa automaticamente.
+### `server`
+
+Continuous YouTube polling — checks for new videos at the configured interval and runs the full pipeline automatically.
 
 ```bash
 odin-writer server
 
-# Com intervalo customizado
+# Custom interval
 POLL_INTERVAL=6h odin-writer server
 
-# Com estilo customizado
-odin-writer server -style ./meu-estilo.json
+# Custom style
+odin-writer server -style ./my-style.json
 ```
 
-O processo roda imediatamente ao iniciar e depois a cada `POLL_INTERVAL`. Erros são logados sem interromper o loop. Shutdown gracioso com `SIGINT` / `SIGTERM`.
+The process runs immediately on start, then again every `POLL_INTERVAL`. Errors are logged without stopping the loop. Graceful shutdown on `SIGINT` / `SIGTERM`.
 
-### Comandos `status` e `cache`
+### `status` and `cache`
 
 ```bash
-# Ver histórico de processamento (últimos 10)
+# Show processing history (last 10 entries)
 odin-writer status
 odin-writer status -n 20
 
-# Listar itens em cache
+# List cached items
 odin-writer cache list
 
-# Limpar cache de um item específico
+# Clear cache for a specific item
 odin-writer cache clear -id MEDIA_ID
 
-# Limpar todo o cache
+# Clear all cache
 odin-writer cache clear
 ```
 
-### Formatos suportados como arquivo local
+### `version`
 
-`mp3`, `mp4`, `mov`, `wav`, `webm`, `m4a` e outros formatos de áudio/vídeo aceitos pelo Groq Whisper.
+```bash
+odin-writer version
+odin-writer --version
+```
 
-## Estilos de escrita
+### Supported local file formats
 
-O estilo controla o tom, idioma, estrutura e regras de conteúdo do artigo gerado. É configurado via env var `STYLE` ou flag `-style` em qualquer comando.
+`mp3`, `mp4`, `mov`, `wav`, `webm`, `m4a` and other audio/video formats accepted by Groq Whisper.
 
-### Estilos built-in
+## Writing styles
 
-| Nome | Descrição |
-|------|-----------|
-| `esportivo` | Jornalismo esportivo em português BR, focado em NFL/Vikings. Tom técnico e apaixonado no estilo ESPN Brasil. |
+Styles control the tone, language, structure, and content rules of the generated article. Set via the `STYLE` env var or the `-style` flag on any command.
 
-### Estilo customizado
+### Built-in styles
 
-Crie um arquivo `.json` com a seguinte estrutura e passe o caminho via `-style`:
+| Name | Description |
+|------|-------------|
+| `esportivo` | Sports journalism in Brazilian Portuguese, focused on NFL/Vikings. Technical and passionate tone in the ESPN Brasil style. |
+
+### Custom style
+
+Create a `.json` file with the following structure and pass its path via `-style`:
 
 ```json
 {
-  "name": "meu-estilo",
-  "persona": "Você é um jornalista especialista em...",
-  "language": "português do Brasil",
-  "tone": "técnico e acessível",
-  "structure": "lide forte, desenvolvimento, conclusão",
-  "word_count": "600 a 900 palavras, entre 5 e 7 parágrafos",
+  "name": "my-style",
+  "persona": "You are a technology journalist...",
+  "language": "English",
+  "tone": "technical and accessible",
+  "structure": "strong lede, development, conclusion",
+  "word_count": "600 to 900 words, 5 to 7 paragraphs",
   "content_rules": [
-    "Reflita fielmente o conteúdo da fonte",
-    "Não invente informações"
+    "Faithfully reflect the source content",
+    "Do not invent information"
   ],
   "style_rules": [
-    "Use linguagem simples e direta",
-    "Evite jargões sem explicação"
+    "Use plain and direct language",
+    "Avoid unexplained jargon"
   ]
 }
 ```
 
 ```bash
-odin-writer run -video-id ABC123 -style ./meu-estilo.json
+odin-writer run -video-id ABC123 -style ./my-style.json
 ```
 
-## Estrutura
+## Project structure
 
 ```
-cmd/odin-writer/main.go     # entrypoint — flags e wiring
+cmd/odin-writer/main.go     # entrypoint — flag parsing and wiring
 internal/
-  config/                   # carrega .env e variáveis de ambiente
-  source/                   # interface Source
+  config/                   # loads .env and environment variables
+  source/                   # Source interface
     youtube/                # yt-dlp wrapper (metadata + download)
-    localfile/              # arquivo local
-  transcriber/              # interface Transcriber
-    groq/                   # Groq Whisper API (multipart, segmentos paralelos)
-  writer/                   # interface Writer
+    localfile/              # local file source
+  transcriber/              # Transcriber interface
+    groq/                   # Groq Whisper API (multipart, parallel segments, rate limiter)
+  writer/                   # Writer interface
     claude/                 # Anthropic SDK
-  publisher/                # interface Publisher
+  publisher/                # Publisher interface
     sanity/                 # Sanity Mutations API
-  style/                    # sistema de estilos de escrita
-    styles/                 # estilos built-in em JSON
-  httpclient/               # HTTP client com retry (backoff exponencial)
-  cache/                    # transcrição e artigo em cache por media ID
-  state/                    # histórico de execuções em JSON
-  pipeline/                 # Runner — orquestra os 4 estágios
-  server/                   # polling loop para modo contínuo
+  style/                    # writing style system
+    styles/                 # built-in styles as embedded JSON
+  httpclient/               # HTTP client with retry (exponential backoff + jitter)
+  cache/                    # transcript and article cache per media ID
+  state/                    # execution history as JSON
+  pipeline/                 # Runner — orchestrates the 4 stages
+  server/                   # polling loop for continuous mode
 ```
 
-## Testes
+## Testing
 
 ```bash
 go test ./...
 ```
+
+Tests use `testing/synctest` for time-dependent scenarios (rate limiter, retry backoff, server polling) and mock HTTP servers for all three external APIs (Groq, Anthropic, Sanity).
+
+## License
+
+MIT
