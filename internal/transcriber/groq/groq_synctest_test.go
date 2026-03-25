@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -212,12 +213,19 @@ func (t *multiPipeTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 	srv, cli := net.Pipe()
 
-	// Server side: read request, write response, close.
+	// Server side: read + drain request, write response, close.
+	// Draining the full request body is mandatory when the body is large:
+	// net.Pipe has no internal buffer, so req.Write on the client side will
+	// block until the server consumes all bytes before the server can write
+	// its response (otherwise both sides deadlock trying to write).
 	serverDone := make(chan struct{})
 	go func() {
 		defer close(serverDone)
 		defer srv.Close()
-		http.ReadRequest(bufio.NewReader(srv)) //nolint:errcheck
+		parsed, _ := http.ReadRequest(bufio.NewReader(srv))
+		if parsed != nil && parsed.Body != nil {
+			io.Copy(io.Discard, parsed.Body) //nolint:errcheck
+		}
 
 		headers := ""
 		for k, v := range r.headers {
@@ -331,6 +339,80 @@ func TestTranscribeFile_LongRetryAfterInBody(t *testing.T) {
 		if elapsed := time.Since(before); elapsed < expected {
 			t.Errorf("fake elapsed %v < %v — body-parsed duration not applied",
 				elapsed, expected)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Large video — multi-segment transcription with rate-limiter waits
+// ---------------------------------------------------------------------------
+
+// TestTranscribeSegmented_FourSegments_RateLimiterTriggersThreeTimes simulates
+// an ~80 MB / 4-hour video broken into 4 segments of ~4000 s each.
+//
+// Splitting behaviour (time-based):
+//   - Each cluster individually ≈ 4000 s < 7200 s limit.
+//   - Two accumulated clusters ≈ 8000 s ≥ 7200 s → split threshold crossed.
+//   - splitWebm therefore produces exactly 4 segments (one cluster each).
+//
+// Rate-limiter behaviour:
+//   - Seg 1: reserve(4000) → secondsUsed = 4000   (no wait)
+//   - Seg 2: reserve(4000) → 8000 > 7200           → wait 1 fake hour, reset
+//   - Seg 3: reserve(4000) → 8000 > 7200           → wait 1 fake hour, reset
+//   - Seg 4: reserve(4000) → 8000 > 7200           → wait 1 fake hour, reset
+//
+// Expected: 4 Groq API calls, fake time ≥ 3 h, result contains all 4 texts.
+func TestTranscribeSegmented_FourSegments_RateLimiterTriggersThreeTimes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// Each cluster: 100 KB of body data.
+		// totalDurationSec = 16000 → secsPerByte ≈ 3.9 e-4
+		// estimatedSecs per cluster ≈ 4000 s  (< 7200 — no per-cluster overflow)
+		// estimatedSecs for two clusters ≈ 8000 s (≥ 7200 — triggers split)
+		const clusterDataSize = 100 * 1024 // 100 KB
+		const totalDurationSec = 16000
+
+		audioData := makeTestWebm(512, []int{
+			clusterDataSize,
+			clusterDataSize,
+			clusterDataSize,
+			clusterDataSize,
+		})
+		audioPath := filepath.Join(t.TempDir(), "large.webm")
+		if err := os.WriteFile(audioPath, audioData, 0600); err != nil {
+			t.Fatalf("writing audio file: %v", err)
+		}
+		audioSize := int64(len(audioData))
+
+		responses := []pipeResponse{
+			{code: http.StatusOK, body: "transcricao-seg1"},
+			{code: http.StatusOK, body: "transcricao-seg2"},
+			{code: http.StatusOK, body: "transcricao-seg3"},
+			{code: http.StatusOK, body: "transcricao-seg4"},
+		}
+		tr := newPipeTranscriber(responses)
+		before := time.Now()
+
+		got, err := tr.transcribeSegmented(context.Background(), audioPath, audioSize, totalDurationSec)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// All 4 segment transcriptions must appear in the joined result.
+		for _, want := range []string{
+			"transcricao-seg1",
+			"transcricao-seg2",
+			"transcricao-seg3",
+			"transcricao-seg4",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("result missing %q — got: %q", want, got)
+			}
+		}
+
+		// Rate limiter should have fired 3 times (segs 2, 3, 4 each wait 1 h).
+		if elapsed := time.Since(before); elapsed < 3*time.Hour {
+			t.Errorf("fake elapsed %v < 3h — expected 3 rate-limiter waits (one per segment after the first)",
+				elapsed)
 		}
 	})
 }
