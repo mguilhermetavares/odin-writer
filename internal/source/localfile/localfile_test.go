@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"odin-writer/internal/source"
+	"github.com/mguilhermetavares/odin-writer/internal/source"
 )
 
 func newSource() *Source {

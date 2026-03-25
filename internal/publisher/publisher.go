@@ -3,7 +3,7 @@ package publisher
 import (
 	"context"
 
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 // Publisher creates a draft article in a CMS.

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"odin-writer/internal/source"
+	"github.com/mguilhermetavares/odin-writer/internal/source"
 )
 
 // Source fetches YouTube videos using yt-dlp.

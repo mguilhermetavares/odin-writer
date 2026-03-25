@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 // Manager handles reading and writing cached transcripts and articles.

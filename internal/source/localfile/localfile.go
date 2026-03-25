@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"odin-writer/internal/source"
+	"github.com/mguilhermetavares/odin-writer/internal/source"
 )
 
 // Source wraps a local audio file (mp3, mp4, mov, wav, webm, etc.).

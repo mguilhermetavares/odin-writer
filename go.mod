@@ -1,4 +1,4 @@
-module odin-writer
+module github.com/mguilhermetavares/odin-writer
 
 go 1.25.0
 

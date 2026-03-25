@@ -12,19 +12,24 @@ import (
 	"syscall"
 	"time"
 
-	"odin-writer/internal/cache"
-	"odin-writer/internal/config"
-	"odin-writer/internal/pipeline"
-	"odin-writer/internal/publisher/sanity"
-	"odin-writer/internal/server"
-	"odin-writer/internal/source"
-	"odin-writer/internal/source/localfile"
-	"odin-writer/internal/source/youtube"
-	"odin-writer/internal/state"
-	"odin-writer/internal/style"
-	"odin-writer/internal/transcriber/groq"
-	"odin-writer/internal/writer/claude"
+	"github.com/mguilhermetavares/odin-writer/internal/cache"
+	"github.com/mguilhermetavares/odin-writer/internal/config"
+	"github.com/mguilhermetavares/odin-writer/internal/pipeline"
+	"github.com/mguilhermetavares/odin-writer/internal/publisher/sanity"
+	"github.com/mguilhermetavares/odin-writer/internal/server"
+	"github.com/mguilhermetavares/odin-writer/internal/source"
+	"github.com/mguilhermetavares/odin-writer/internal/source/localfile"
+	"github.com/mguilhermetavares/odin-writer/internal/source/youtube"
+	"github.com/mguilhermetavares/odin-writer/internal/state"
+	"github.com/mguilhermetavares/odin-writer/internal/style"
+	"github.com/mguilhermetavares/odin-writer/internal/transcriber/groq"
+	"github.com/mguilhermetavares/odin-writer/internal/writer/claude"
 )
+
+// version is injected at build time via:
+//
+//	-ldflags "-X main.version=v1.0.0"
+var version = "dev"
 
 const usage = `usage: odin-writer <command> [flags]
 
@@ -61,6 +66,8 @@ func main() {
 		cacheCmd(os.Args[2:], envFile)
 	case "-h", "--help", "help":
 		fmt.Fprint(os.Stdout, usage)
+	case "-version", "--version", "version":
+		fmt.Println(version)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		os.Exit(1)

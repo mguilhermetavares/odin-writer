@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"odin-writer/internal/pipeline"
+	"github.com/mguilhermetavares/odin-writer/internal/pipeline"
 )
 
 // Server polls YouTube for new videos and runs the full pipeline on each tick.

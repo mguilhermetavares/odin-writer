@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 // newPublisherForTest creates a Publisher wired to the given test server URL.

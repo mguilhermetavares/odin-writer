@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"odin-writer/internal/cache"
-	"odin-writer/internal/source"
-	"odin-writer/internal/state"
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/cache"
+	"github.com/mguilhermetavares/odin-writer/internal/source"
+	"github.com/mguilhermetavares/odin-writer/internal/state"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 // ---------------------------------------------------------------------------

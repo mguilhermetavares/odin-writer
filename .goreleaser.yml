@@ -1,0 +1,65 @@
+version: 2
+
+project_name: odin-writer
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: odin-writer
+    main: ./cmd/odin-writer
+    binary: odin-writer
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: odin-writer
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - .env.example
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: odin-writer
+    repository:
+      owner: mguilhermetavares
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/mguilhermetavares/odin-writer"
+    description: "CLI que converte episódios de podcast e vídeos do YouTube em artigos para websites"
+    license: "MIT"
+    dependencies:
+      - name: yt-dlp
+      - name: ffmpeg
+        type: optional
+    install: |
+      bin.install "odin-writer"
+    test: |
+      system "#{bin}/odin-writer", "--version"

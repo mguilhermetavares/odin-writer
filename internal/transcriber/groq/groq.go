@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"odin-writer/internal/httpclient"
+	"github.com/mguilhermetavares/odin-writer/internal/httpclient"
 )
 
 const (

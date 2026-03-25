@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode"
 
-	"odin-writer/internal/httpclient"
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/httpclient"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 type Publisher struct {

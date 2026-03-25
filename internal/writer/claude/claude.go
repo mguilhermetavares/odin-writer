@@ -10,8 +10,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"odin-writer/internal/style"
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/style"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 type Writer struct {

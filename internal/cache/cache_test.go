@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 func TestSaveTranscript_CreatesFile(t *testing.T) {

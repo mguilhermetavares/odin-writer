@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"odin-writer/internal/cache"
-	"odin-writer/internal/publisher"
-	"odin-writer/internal/source"
-	"odin-writer/internal/state"
-	"odin-writer/internal/transcriber"
-	"odin-writer/internal/writer"
+	"github.com/mguilhermetavares/odin-writer/internal/cache"
+	"github.com/mguilhermetavares/odin-writer/internal/publisher"
+	"github.com/mguilhermetavares/odin-writer/internal/source"
+	"github.com/mguilhermetavares/odin-writer/internal/state"
+	"github.com/mguilhermetavares/odin-writer/internal/transcriber"
+	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
 // Runner orchestrates the full pipeline:
