@@ -28,6 +28,15 @@ Source → Transcribe → Write → Publish
 
 Transcripts and articles are cached per media ID. Running the same episode twice has no extra cost.
 
+## Prerequisites
+
+| Dependency | Required | Install |
+|------------|----------|---------|
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | For `source=youtube` | `brew install yt-dlp` or `pip install yt-dlp` |
+| [ffmpeg](https://ffmpeg.org/) | For audio files > 25 MB | `brew install ffmpeg` |
+
+If `yt-dlp` is not installed and you run `odin-writer run` with the default YouTube source, you will get a clear error message with installation instructions.
+
 ## Installation
 
 ### Homebrew (macOS / Linux)
@@ -37,9 +46,11 @@ brew tap mguilhermetavares/tap
 brew install odin-writer
 ```
 
+> Homebrew automatically installs `yt-dlp` as a dependency.
+
 ### Build from source
 
-Requires Go 1.25+, [yt-dlp](https://github.com/yt-dlp/yt-dlp), and optionally [ffmpeg](https://ffmpeg.org/).
+Requires Go 1.25+.
 
 ```bash
 git clone https://github.com/mguilhermetavares/odin-writer

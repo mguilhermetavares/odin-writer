@@ -87,6 +87,12 @@ func runCmd(args []string, envFile string) {
 	background := fs.Bool("background", false, "run detached in background, writing output to ODIN_WRITER_HOME/logs/")
 	fs.Parse(args)
 
+	if *srcType == "youtube" {
+		if _, err := exec.LookPath("yt-dlp"); err != nil {
+			log.Fatal("error: yt-dlp not found\n\n  Install it with:\n    pip install yt-dlp\n  or:\n    brew install yt-dlp")
+		}
+	}
+
 	cfg := mustLoadConfig(envFile)
 	if *styleFlag != "" {
 		cfg.StyleName = *styleFlag
