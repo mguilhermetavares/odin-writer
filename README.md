@@ -1,5 +1,16 @@
 # odin-writer
 
+<p align="center">
+  <img src=".github/assets/mascot.png" alt="odin-writer mascot" width="160" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/mguilhermetavares/odin-writer/actions/workflows/ci.yml"><img src="https://github.com/mguilhermetavares/odin-writer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/mguilhermetavares/odin-writer/releases"><img src="https://img.shields.io/github/v/release/mguilhermetavares/odin-writer" alt="Release"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
+</p>
+
 A Go CLI that automatically converts podcast episodes and YouTube videos into written articles for websites.
 
 The goal is not to create content from scratch, but to transform what already exists in audio/video format into a structured, publishable written version — faithfully summarizing the original content.
