@@ -54,8 +54,11 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return resp, nil
 		}
 
-		// Close body before retry to avoid connection leaks
-		resp.Body.Close()
+		// Close body before retry to avoid connection leaks.
+		// On the last attempt, leave the body open for the caller to read.
+		if attempt < maxRetries {
+			resp.Body.Close()
+		}
 	}
 
 	if err != nil {
