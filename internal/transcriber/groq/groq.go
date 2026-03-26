@@ -84,10 +84,9 @@ func (t *Transcriber) transcribeSegmented(ctx context.Context, audioPath string,
 
 		text, err := t.transcribeFile(ctx, seg.path)
 		if err != nil {
-			// Erro não-recuperável num segmento: marcar lacuna e continuar
-			fmt.Printf("  [AVISO] segmento %d falhou: %v — continuando\n", i+1, err)
-			parts[i] = fmt.Sprintf("[segmento %d indisponível]", i+1)
-			continue
+			// Abortar em vez de continuar com lacuna: um artigo com trecho ausente
+			// é pior do que nenhum artigo — o revisor não saberia o que perdeu.
+			return "", fmt.Errorf("segmento %d/%d: %w", i+1, len(segments), err)
 		}
 		parts[i] = text
 	}
