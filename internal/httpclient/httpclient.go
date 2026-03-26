@@ -12,8 +12,9 @@ const (
 	maxDelay   = 30 * time.Second
 )
 
-// RetryTransport is an http.RoundTripper that retries on 429 and 5xx responses
+// RetryTransport is an http.RoundTripper that retries on 5xx responses
 // using exponential backoff with jitter.
+// 429 responses are NOT retried here — callers handle Retry-After themselves.
 type RetryTransport struct {
 	base http.RoundTripper
 }
@@ -50,7 +51,7 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			continue
 		}
 
-		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+		if resp.StatusCode < 500 {
 			return resp, nil
 		}
 

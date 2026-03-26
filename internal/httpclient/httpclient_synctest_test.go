@@ -108,11 +108,12 @@ func newPipeTransport(codes ...int) *RetryTransport {
 // Tests
 // ---------------------------------------------------------------------------
 
-// TestRetry_429ThenSuccess verifies that a 429 followed by a 200 returns the
-// success response after exactly one retry.  Fake time advances by backoff(1).
-func TestRetry_429ThenSuccess(t *testing.T) {
+// TestRetry_429IsNotRetried verifies that a 429 is returned immediately to the
+// caller without any backoff sleep — Retry-After is the caller's responsibility.
+func TestRetry_429IsNotRetried(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		before := time.Now()
+		// Second response would be 200, but it must never be reached.
 		rt := newPipeTransport(http.StatusTooManyRequests, http.StatusOK)
 
 		req, _ := http.NewRequest(http.MethodGet, "http://test/", nil)
@@ -122,40 +123,12 @@ func TestRetry_429ThenSuccess(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("want 200, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("want 429 returned as-is, got %d", resp.StatusCode)
 		}
-		// Fake time must have advanced by at least backoff(1) (≥ baseDelay).
-		if elapsed := time.Since(before); elapsed < baseDelay {
-			t.Errorf("fake elapsed %v < baseDelay %v — backoff sleep may not have fired", elapsed, baseDelay)
-		}
-	})
-}
-
-// TestRetry_Two429ThenSuccess mirrors the old TestRetryOn429UntilSuccess but
-// runs in a synctest bubble so no real sleep occurs.
-func TestRetry_Two429ThenSuccess(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		before := time.Now()
-		rt := newPipeTransport(
-			http.StatusTooManyRequests,
-			http.StatusTooManyRequests,
-			http.StatusOK,
-		)
-
-		req, _ := http.NewRequest(http.MethodGet, "http://test/", nil)
-		resp, err := rt.RoundTrip(req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("want 200 after retries, got %d", resp.StatusCode)
-		}
-		// Two backoff sleeps: minimum fake elapsed ≥ backoff(1)+backoff(2) ≥ 3×baseDelay.
-		if elapsed := time.Since(before); elapsed < 3*baseDelay {
-			t.Errorf("fake elapsed %v < 3×baseDelay — backoffs may not have fired", elapsed)
+		// No backoff sleep should have fired.
+		if elapsed := time.Since(before); elapsed >= baseDelay {
+			t.Errorf("fake elapsed %v ≥ baseDelay %v — unexpected retry sleep", elapsed, baseDelay)
 		}
 	})
 }
@@ -200,15 +173,15 @@ func TestRetry_503ThenSuccess(t *testing.T) {
 	})
 }
 
-// TestRetry_ExhaustsMaxRetries mirrors TestGivesUpAfterMaxRetriesOn429.
-// The transport makes maxRetries+1 calls (all 429) and returns the last 429.
+// TestRetry_ExhaustsMaxRetries verifies that after maxRetries+1 consecutive 5xx
+// responses the transport returns the last error response.
 // Without synctest this would sleep backoff(1)+backoff(2)+backoff(3) ≈ 7–10 s.
 func TestRetry_ExhaustsMaxRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		// Build a codes slice of maxRetries+1 copies of 429.
+		// Build a codes slice of maxRetries+1 copies of 500.
 		codes := make([]int, maxRetries+1)
 		for i := range codes {
-			codes[i] = http.StatusTooManyRequests
+			codes[i] = http.StatusInternalServerError
 		}
 		rt := newPipeTransport(codes...)
 
@@ -220,8 +193,8 @@ func TestRetry_ExhaustsMaxRetries(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		if resp.StatusCode != http.StatusTooManyRequests {
-			t.Errorf("want 429 after exhausted retries, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("want 500 after exhausted retries, got %d", resp.StatusCode)
 		}
 		// Fake time advanced by backoff(1)+backoff(2)+backoff(3) ≥ 7×baseDelay.
 		if elapsed := time.Since(before); elapsed < 7*baseDelay {
@@ -240,7 +213,7 @@ func TestRetry_BackoffGrowsPerAttempt(t *testing.T) {
 		handler := func(w http.ResponseWriter, r *http.Request) {
 			checkpoints = append(checkpoints, time.Now())
 			if callIdx < maxRetries {
-				w.WriteHeader(http.StatusTooManyRequests)
+				w.WriteHeader(http.StatusInternalServerError)
 			} else {
 				w.WriteHeader(http.StatusOK)
 			}
