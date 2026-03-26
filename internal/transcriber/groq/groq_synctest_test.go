@@ -343,6 +343,62 @@ func TestTranscribeFile_LongRetryAfterInBody(t *testing.T) {
 	})
 }
 
+// TestTranscribeFile_Consecutive429sSucceedWithinLimit verifies that multiple
+// consecutive 429 responses are retried up to maxRateLimitRetries and succeed
+// if the final retry returns 200.
+func TestTranscribeFile_Consecutive429sSucceedWithinLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		responses := []pipeResponse{
+			{code: http.StatusTooManyRequests, headers: map[string]string{"Retry-After": "495"}, body: `{"error":{"message":"rate limited"}}`},
+			{code: http.StatusTooManyRequests, headers: map[string]string{"Retry-After": "2828"}, body: `{"error":{"message":"rate limited"}}`},
+			{code: http.StatusTooManyRequests, headers: map[string]string{"Retry-After": "9414"}, body: `{"error":{"message":"rate limited"}}`},
+			{code: http.StatusOK, body: "finally transcribed"},
+		}
+		tr := newPipeTranscriber(responses)
+		audioPath := audioFileSynctest(t)
+		before := time.Now()
+
+		got, err := tr.transcribeFile(context.Background(), audioPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "finally transcribed" {
+			t.Errorf("want %q, got %q", "finally transcribed", got)
+		}
+
+		// Fake time must advance by sum of all three waits.
+		wantElapsed := (495 + 2828 + 9414) * time.Second
+		if elapsed := time.Since(before); elapsed < wantElapsed {
+			t.Errorf("fake elapsed %v < %v — not all 429 sleeps fired", elapsed, wantElapsed)
+		}
+	})
+}
+
+// TestTranscribeFile_429ExceedsMaxRetries verifies that after maxRateLimitRetries
+// consecutive 429 responses the function returns an error instead of looping forever.
+func TestTranscribeFile_429ExceedsMaxRetries(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		responses := make([]pipeResponse, maxRateLimitRetries+1)
+		for i := range responses {
+			responses[i] = pipeResponse{
+				code: http.StatusTooManyRequests,
+				headers: map[string]string{"Retry-After": "300"},
+				body: `{"error":{"message":"rate limited"}}`,
+			}
+		}
+		tr := newPipeTranscriber(responses)
+		audioPath := audioFileSynctest(t)
+
+		_, err := tr.transcribeFile(context.Background(), audioPath)
+		if err == nil {
+			t.Fatal("expected error after exceeding max retries, got nil")
+		}
+		if !strings.Contains(err.Error(), "rate limit") {
+			t.Errorf("expected rate limit error, got: %v", err)
+		}
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Large video — multi-segment transcription with rate-limiter waits
 // ---------------------------------------------------------------------------

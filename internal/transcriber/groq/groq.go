@@ -203,8 +203,14 @@ func writeSegment(data, header []byte, begin, end int, outDir string, idx int) (
 	return segment{path: path}, nil
 }
 
+const maxRateLimitRetries = 3
+
 // transcribeFile envia um único ficheiro de áudio à API Groq Whisper.
 func (t *Transcriber) transcribeFile(ctx context.Context, audioPath string) (string, error) {
+	return t.transcribeFileWithRetry(ctx, audioPath, 0)
+}
+
+func (t *Transcriber) transcribeFileWithRetry(ctx context.Context, audioPath string, attempt int) (string, error) {
 	f, err := os.Open(audioPath)
 	if err != nil {
 		return "", fmt.Errorf("open audio: %w", err)
@@ -252,15 +258,17 @@ func (t *Transcriber) transcribeFile(ctx context.Context, audioPath string) (str
 	}
 
 	if resp.StatusCode == http.StatusTooManyRequests {
+		if attempt >= maxRateLimitRetries {
+			return "", fmt.Errorf("groq rate limit after %d retries: %s", attempt, groqErrorMessage(body))
+		}
 		waitSecs := parseRetryAfter(resp, body)
-		fmt.Printf("  rate limit atingido — aguardando %.0fs...\n", waitSecs)
+		fmt.Printf("  rate limit atingido — aguardando %.0fs... (tentativa %d/%d)\n", waitSecs, attempt+1, maxRateLimitRetries)
 		select {
 		case <-time.After(time.Duration(waitSecs) * time.Second):
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
-		// Retry único após espera
-		return t.transcribeFile(ctx, audioPath)
+		return t.transcribeFileWithRetry(ctx, audioPath, attempt+1)
 	}
 
 	if resp.StatusCode != http.StatusOK {
