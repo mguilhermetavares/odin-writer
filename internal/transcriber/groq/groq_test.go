@@ -50,6 +50,145 @@ func writeTestWebm(t *testing.T, headerSize int, clusters []int) string {
 }
 
 // ---------------------------------------------------------------------------
+// EBML helpers: ebmlVINTSize and clusterTimecodeMs
+// ---------------------------------------------------------------------------
+
+// makeClusterBytes builds a minimal EBML Cluster containing a Timecode element.
+//
+//	[Cluster ID 4B] [size VINT 1B] [Timecode ID 1B] [timecode size VINT 1B] [timecode data 2B]
+//
+// timecodeMs is encoded as a big-endian uint16 (max 65535ms ≈ 65s, sufficient for tests).
+func makeClusterBytes(timecodeMs uint16) []byte {
+	return []byte{
+		0x1F, 0x43, 0xB6, 0x75, // Cluster ID
+		0x84,                         // size VINT: 0x84 = 4 bytes follow
+		0xE7,                         // Timecode element ID
+		0x82,                         // size VINT: 0x82 = 2 bytes
+		byte(timecodeMs >> 8), byte(timecodeMs), // big-endian value
+	}
+}
+
+// TestEBMLVINTSize_OneByte verifies that a 1-byte VINT is parsed correctly.
+func TestEBMLVINTSize_OneByte(t *testing.T) {
+	// 0x84 = 1000 0100 → marker bit at position 7, value = 0x04
+	data := []byte{0x84}
+	val, width, ok := ebmlVINTSize(data, 0)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if width != 1 {
+		t.Errorf("width: got %d, want 1", width)
+	}
+	if val != 4 {
+		t.Errorf("val: got %d, want 4", val)
+	}
+}
+
+// TestEBMLVINTSize_TwoBytes verifies that a 2-byte VINT is parsed correctly.
+func TestEBMLVINTSize_TwoBytes(t *testing.T) {
+	// 0x40 0x05 = 0100 0000 0000 0101 → width=2, value = 0x0005 = 5
+	data := []byte{0x40, 0x05}
+	val, width, ok := ebmlVINTSize(data, 0)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if width != 2 {
+		t.Errorf("width: got %d, want 2", width)
+	}
+	if val != 5 {
+		t.Errorf("val: got %d, want 5", val)
+	}
+}
+
+// TestEBMLVINTSize_UnknownSize verifies that the 8-byte "unknown size" VINT
+// used by streaming muxers is handled without returning ok=false.
+func TestEBMLVINTSize_UnknownSize(t *testing.T) {
+	// 0x01 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF = streaming unknown-size cluster
+	data := []byte{0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+	_, width, ok := ebmlVINTSize(data, 0)
+	if !ok {
+		t.Fatal("expected ok=true for unknown-size VINT")
+	}
+	if width != 8 {
+		t.Errorf("width: got %d, want 8", width)
+	}
+}
+
+// TestEBMLVINTSize_Truncated verifies that ok=false is returned when the data
+// is too short to hold the full VINT.
+func TestEBMLVINTSize_Truncated(t *testing.T) {
+	// 0x40 signals a 2-byte VINT but only 1 byte is provided.
+	data := []byte{0x40}
+	_, _, ok := ebmlVINTSize(data, 0)
+	if ok {
+		t.Fatal("expected ok=false for truncated VINT")
+	}
+}
+
+// TestClusterTimecodeMs_BasicExtraction verifies that a well-formed Cluster
+// with a Timecode element is parsed correctly.
+func TestClusterTimecodeMs_BasicExtraction(t *testing.T) {
+	data := makeClusterBytes(1000) // 1000ms
+	ms, ok := clusterTimecodeMs(data, 0, len(data))
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if ms != 1000 {
+		t.Errorf("got %d ms, want 1000", ms)
+	}
+}
+
+// TestClusterTimecodeMs_ZeroTimecode verifies that a timecode of 0ms is valid.
+func TestClusterTimecodeMs_ZeroTimecode(t *testing.T) {
+	data := makeClusterBytes(0)
+	ms, ok := clusterTimecodeMs(data, 0, len(data))
+	if !ok {
+		t.Fatal("expected ok=true for zero timecode")
+	}
+	if ms != 0 {
+		t.Errorf("got %d ms, want 0", ms)
+	}
+}
+
+// TestClusterTimecodeMs_NonZeroOffset verifies that parsing works when the
+// cluster does not start at byte 0 (e.g. after a header).
+func TestClusterTimecodeMs_NonZeroOffset(t *testing.T) {
+	prefix := []byte{0xAA, 0xBB, 0xCC} // arbitrary header bytes
+	cluster := makeClusterBytes(5000)
+	data := append(prefix, cluster...)
+	offset := len(prefix)
+	ms, ok := clusterTimecodeMs(data, offset, len(data))
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if ms != 5000 {
+		t.Errorf("got %d ms, want 5000", ms)
+	}
+}
+
+// TestClusterTimecodeMs_GarbageBytesReturnsFalse verifies the graceful fallback:
+// random bytes after the cluster ID cause ok=false instead of a panic or wrong value.
+func TestClusterTimecodeMs_GarbageBytesReturnsFalse(t *testing.T) {
+	data := []byte{0x1F, 0x43, 0xB6, 0x75, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	_, ok := clusterTimecodeMs(data, 0, len(data))
+	if ok {
+		t.Fatal("expected ok=false for garbage cluster data")
+	}
+}
+
+// TestClusterTimecodeMs_LimitPreventsReadingIntoNextCluster verifies that
+// parsing stops at limit and returns ok=false if Timecode is not found within.
+func TestClusterTimecodeMs_LimitPreventsReadingIntoNextCluster(t *testing.T) {
+	cluster := makeClusterBytes(2000)
+	// Truncate limit to just the cluster ID + size VINT (no children).
+	limit := 4 + 1 // cluster ID (4) + size VINT (1)
+	_, ok := clusterTimecodeMs(cluster, 0, limit)
+	if ok {
+		t.Fatal("expected ok=false when limit excludes Timecode data")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // splitWebm tests
 // ---------------------------------------------------------------------------
 

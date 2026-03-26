@@ -100,6 +100,114 @@ type segment struct {
 	estimatedSecs float64
 }
 
+// ebmlIDWidth returns the byte width of an EBML element ID starting with b.
+// EBML element IDs preserve their marker bit, so the width is determined by
+// the position of the highest set bit. Returns 0 for invalid leading bytes.
+func ebmlIDWidth(b byte) int {
+	switch {
+	case b >= 0x80:
+		return 1
+	case b >= 0x40:
+		return 2
+	case b >= 0x20:
+		return 3
+	case b >= 0x10:
+		return 4
+	default:
+		return 0 // invalid (0x00–0x0F)
+	}
+}
+
+// ebmlVINTSize parses an EBML variable-length integer used for element sizes.
+// The leading marker bit is stripped from the value. Supports 1–8 byte VINTs,
+// including the all-ones "unknown size" encoding used by streaming muxers.
+// Returns (value, width, ok).
+func ebmlVINTSize(data []byte, pos int) (val int64, width int, ok bool) {
+	if pos >= len(data) {
+		return 0, 0, false
+	}
+	b := data[pos]
+	// Width = position of the highest set bit (1-indexed from MSB).
+	width = 1
+	for width <= 8 && (b>>(8-width))&1 == 0 {
+		width++
+	}
+	if width > 8 || pos+width > len(data) {
+		return 0, 0, false
+	}
+	// Strip marker bit and accumulate remaining bytes.
+	val = int64(b & (0xFF >> width))
+	for i := 1; i < width; i++ {
+		val = val<<8 | int64(data[pos+i])
+	}
+	return val, width, true
+}
+
+// clusterTimecodeMs reads the Timecode element (ID 0xE7) from the Cluster
+// starting at clusterOffset. limit bounds parsing to within a single cluster
+// (pass the next cluster offset, or len(data) for the last cluster).
+// Returns (milliseconds, true) on success, (0, false) on any parse error.
+func clusterTimecodeMs(data []byte, clusterOffset, limit int) (ms int64, ok bool) {
+	pos := clusterOffset
+
+	// Skip the 4-byte Cluster ID.
+	pos += 4
+	if pos >= limit {
+		return 0, false
+	}
+
+	// Skip the Cluster size VINT (value not needed; we iterate children instead).
+	_, width, ok2 := ebmlVINTSize(data, pos)
+	if !ok2 {
+		return 0, false
+	}
+	pos += width
+
+	// Iterate child elements looking for Timecode (ID 0xE7).
+	const maxElements = 8
+	for i := 0; i < maxElements && pos < limit && pos < len(data); i++ {
+		idByte := data[pos]
+		idWidth := ebmlIDWidth(idByte)
+		if idWidth == 0 {
+			return 0, false
+		}
+		if pos+idWidth > len(data) || pos+idWidth > limit {
+			return 0, false
+		}
+		pos += idWidth
+
+		elemSize, sizeWidth, ok3 := ebmlVINTSize(data, pos)
+		if !ok3 {
+			return 0, false
+		}
+		pos += sizeWidth
+
+		if idByte == 0xE7 { // Timecode
+			if elemSize > 8 || pos+int(elemSize) > len(data) {
+				return 0, false
+			}
+			var val int64
+			for j := 0; j < int(elemSize); j++ {
+				val = val<<8 | int64(data[pos+j])
+			}
+			return val, true
+		}
+
+		// SimpleBlock (0xA3) and BlockGroup (0xA0) appear after Timecode per spec;
+		// reaching them means Timecode was absent.
+		if idByte == 0xA3 || idByte == 0xA0 {
+			return 0, false
+		}
+
+		if pos+int(elemSize) > len(data) || pos+int(elemSize) > limit {
+			return 0, false
+		}
+		pos += int(elemSize)
+	}
+
+	return 0, false
+}
+
 // splitWebm divide um ficheiro webm em chunks válidos sem ffmpeg.
 //
 // Cada chunk é cortado nos limites dos elementos Cluster do formato webm,
@@ -136,48 +244,84 @@ func splitWebm(audioPath string, totalSize int64, totalDurationSec int, outDir s
 	header := data[:clusterOffsets[0]]
 	bodyBudget := maxBytes - len(header) // bytes de body disponíveis por chunk
 
-	// Duração por byte (para estimar a duração de cada segmento)
+	// Duração por byte (fallback quando timecodes não estão disponíveis)
 	var secsPerByte float64
 	if totalDurationSec > 0 && totalSize > 0 {
 		secsPerByte = float64(totalDurationSec) / float64(totalSize)
+	}
+
+	// Tentar extrair timecodes EBML de cada Cluster para estimativas mais precisas.
+	clusterTimecodes := make([]float64, len(clusterOffsets))
+	hasTimecodes := true
+	for i, off := range clusterOffsets {
+		limit := len(data)
+		if i+1 < len(clusterOffsets) {
+			limit = clusterOffsets[i+1]
+		}
+		ms, ok := clusterTimecodeMs(data, off, limit)
+		if !ok {
+			hasTimecodes = false
+			break
+		}
+		clusterTimecodes[i] = float64(ms) / 1000.0
 	}
 
 	// Agrupar clusters em segmentos respeitando bodyBudget e maxSecondsPerHour
 	var segments []segment
 	segIdx := 0
 	chunkBegin := clusterOffsets[0]
-	boundaries := make([]int, len(clusterOffsets)-1+1)
+	chunkBeginIdx := 0
+	boundaries := make([]int, len(clusterOffsets))
 	copy(boundaries, clusterOffsets[1:])
 	boundaries[len(boundaries)-1] = len(data)
 
-	for i, nextCluster := range boundaries {
-		bodySize := nextCluster - chunkBegin
-		estimatedSecs := float64(bodySize) * secsPerByte
+	for i, nextBoundary := range boundaries {
+		bodySize := nextBoundary - chunkBegin
+
+		// Estimate segment duration using EBML timecodes when available,
+		// falling back to byte proportion for the last boundary (EOF).
+		var estimatedSecs float64
+		nextClusterIdx := i + 1
+		if hasTimecodes && nextClusterIdx < len(clusterTimecodes) {
+			estimatedSecs = clusterTimecodes[nextClusterIdx] - clusterTimecodes[chunkBeginIdx]
+		} else {
+			estimatedSecs = float64(bodySize) * secsPerByte
+		}
 
 		sizeExceeded := bodySize >= bodyBudget
 		timeExceeded := totalDurationSec > 0 && estimatedSecs >= maxSecondsPerHour
 
 		if sizeExceeded || timeExceeded {
-			// Flush até ao cluster anterior (não inclui nextCluster)
-			var flushEnd int
+			// Flush até ao cluster anterior (não inclui nextBoundary)
+			var flushEnd, flushEndIdx int
 			if i > 0 {
 				flushEnd = boundaries[i-1]
+				flushEndIdx = i // boundaries[i-1] = clusterOffsets[i]
 			} else {
-				flushEnd = nextCluster // cluster único já excede o limite — incluir na mesma
+				flushEnd = nextBoundary // cluster único já excede o limite — incluir na mesma
+				flushEndIdx = 1
+			}
+
+			var segSecs float64
+			if hasTimecodes && flushEndIdx < len(clusterTimecodes) {
+				segSecs = clusterTimecodes[flushEndIdx] - clusterTimecodes[chunkBeginIdx]
+			} else {
+				segSecs = float64(flushEnd-chunkBegin) * secsPerByte
 			}
 
 			seg, err := writeSegment(data, header, chunkBegin, flushEnd, outDir, segIdx)
 			if err != nil {
 				return nil, err
 			}
-			seg.estimatedSecs = float64(flushEnd-chunkBegin) * secsPerByte
+			seg.estimatedSecs = segSecs
 			segments = append(segments, seg)
 			segIdx++
 			chunkBegin = flushEnd
+			chunkBeginIdx = flushEndIdx
 		}
 	}
 
-	// Último chunk (dados restantes)
+	// Último chunk (dados restantes) — always uses byte fallback (no next cluster boundary)
 	if chunkBegin < len(data) {
 		seg, err := writeSegment(data, header, chunkBegin, len(data), outDir, segIdx)
 		if err != nil {
