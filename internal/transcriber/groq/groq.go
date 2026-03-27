@@ -241,8 +241,11 @@ func splitWebm(audioPath string, totalSize int64, totalDurationSec int, outDir s
 		return []segment{{path: audioPath, estimatedSecs: float64(totalDurationSec)}}, nil
 	}
 
-	// Header = tudo antes do primeiro Cluster
-	header := data[:clusterOffsets[0]]
+	// Header = tudo antes do primeiro Cluster, com Duration removida.
+	// O elemento Duration (EBML ID 0x4489) contém a duração total do ficheiro
+	// original. Se for copiado para cada segmento, o Groq Whisper interpreta
+	// cada segmento como tendo a duração completa e falha com 500.
+	header := stripDuration(data[:clusterOffsets[0]])
 	bodyBudget := maxBytes - len(header) // bytes de body disponíveis por chunk
 
 	// Duração por byte (fallback quando timecodes não estão disponíveis)
@@ -339,6 +342,50 @@ func splitWebm(audioPath string, totalSize int64, totalDurationSec int, outDir s
 	}
 
 	return segments, nil
+}
+
+// stripDuration returns a copy of header with the EBML Duration element
+// (ID 0x4489) replaced by an EBML Void of the same size.  This prevents each
+// segment from inheriting the original file's total duration — Groq Whisper
+// reads that field and rejects or mischarges the request when it reports the
+// full ~5693 s instead of the segment's actual ~1130 s.
+//
+// EBML Void (ID 0xEC) is defined as padding and ignored by all parsers.
+func stripDuration(header []byte) []byte {
+	out := make([]byte, len(header))
+	copy(out, header)
+	for i := 0; i < len(out)-2; i++ {
+		if out[i] != 0x44 || out[i+1] != 0x89 {
+			continue
+		}
+		// Duration ID found. Size is encoded in a 1-byte VINT (Duration is
+		// always 4 or 8 bytes, so size ≤ 8 → fits in a 1-byte VINT).
+		if i+2 >= len(out) {
+			break
+		}
+		sizeVINT := out[i+2]
+		if sizeVINT&0x80 == 0 {
+			break // not a 1-byte VINT — unexpected, leave unchanged
+		}
+		size := int(sizeVINT & 0x7F) // 4 or 8
+		total := 2 + 1 + size        // ID(2) + sizeVINT(1) + value
+		if i+total > len(out) {
+			break
+		}
+		// Replace with EBML Void of identical byte length.
+		// Void body = total - 2 bytes (after Void ID + Void size VINT).
+		voidBody := total - 2
+		if voidBody < 1 || voidBody > 0x7F {
+			break // can't encode in a 1-byte VINT — leave unchanged
+		}
+		out[i] = 0xEC                     // Void element ID
+		out[i+1] = byte(0x80 | voidBody)  // 1-byte size VINT
+		for j := 2; j < total; j++ {
+			out[i+j] = 0x00
+		}
+		break
+	}
+	return out
 }
 
 // writeSegment escreve header + data[begin:end] num ficheiro temporário.

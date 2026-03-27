@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -617,6 +618,82 @@ func TestTranscribeFile_Error500ReturnsErrorWithStatusCode(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected error message to contain %q, got %q", expected, errMsg)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// stripDuration tests
+// ---------------------------------------------------------------------------
+
+// makeDurationHeader builds a minimal EBML header containing a Duration
+// element (0x4489) with a float32 value, surrounded by padding bytes.
+func makeDurationHeader(durationMs float32) []byte {
+	var buf []byte
+	buf = append(buf, 0xAA, 0xBB, 0xCC) // leading padding
+	// Duration element: ID(2) + sizeVINT(1) + float32(4) = 7 bytes
+	buf = append(buf, 0x44, 0x89) // Duration ID
+	buf = append(buf, 0x84)       // size VINT: 4 bytes
+	b := math.Float32bits(durationMs)
+	buf = append(buf, byte(b>>24), byte(b>>16), byte(b>>8), byte(b))
+	buf = append(buf, 0xDD, 0xEE) // trailing padding
+	return buf
+}
+
+// TestStripDuration_ReplacesWithVoid verifies that the Duration element is
+// replaced with an EBML Void element of the same byte length.
+func TestStripDuration_ReplacesWithVoid(t *testing.T) {
+	header := makeDurationHeader(5_692_761.0)
+	out := stripDuration(header)
+
+	if len(out) != len(header) {
+		t.Fatalf("length changed: got %d, want %d", len(out), len(header))
+	}
+
+	// Duration ID 0x4489 must be gone.
+	for i := 0; i < len(out)-1; i++ {
+		if out[i] == 0x44 && out[i+1] == 0x89 {
+			t.Errorf("Duration ID 0x4489 still present at offset %d", i)
+		}
+	}
+
+	// Void ID 0xEC must be present where Duration was (offset 3).
+	if out[3] != 0xEC {
+		t.Errorf("Void ID not at offset 3: got 0x%02x, want 0xEC", out[3])
+	}
+	// Void size VINT: body = 7 - 2 = 5 → 0x80|5 = 0x85
+	if out[4] != 0x85 {
+		t.Errorf("Void size VINT: got 0x%02x, want 0x85", out[4])
+	}
+}
+
+// TestStripDuration_NoDurationLeftUnchanged verifies that a header without a
+// Duration element is returned byte-for-byte identical.
+func TestStripDuration_NoDurationLeftUnchanged(t *testing.T) {
+	header := []byte{0x1A, 0x45, 0xDF, 0xA3, 0x84, 0x01, 0x02, 0x03, 0x04}
+	out := stripDuration(header)
+	if len(out) != len(header) {
+		t.Fatalf("length changed: %d → %d", len(header), len(out))
+	}
+	for i, b := range header {
+		if out[i] != b {
+			t.Errorf("byte %d changed: got 0x%02x, want 0x%02x", i, out[i], b)
+		}
+	}
+}
+
+// TestStripDuration_DoesNotMutateInput verifies that stripDuration returns a
+// copy and does not modify the original header slice.
+func TestStripDuration_DoesNotMutateInput(t *testing.T) {
+	header := makeDurationHeader(1_000_000.0)
+	original := make([]byte, len(header))
+	copy(original, header)
+
+	_ = stripDuration(header)
+
+	for i, b := range original {
+		if header[i] != b {
+			t.Errorf("input mutated at byte %d: got 0x%02x, want 0x%02x", i, header[i], b)
+		}
 	}
 }
 
