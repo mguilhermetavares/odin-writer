@@ -22,7 +22,7 @@ Source → Transcribe → Write → Publish
 ```
 
 1. **Source** — identifies and downloads the audio (YouTube via yt-dlp, or a local file)
-2. **Transcribe** — transcribes audio with Groq Whisper; large files are split into segments automatically
+2. **Transcribe** — transcribes audio with Groq Whisper; files > 25 MB or > 19 min are split into segments automatically (native WebM cluster splitting, no ffmpeg)
 3. **Write** — summarizes the transcript into an article using Claude (Anthropic), following a configured writing style
 4. **Publish** — creates a draft in Sanity CMS
 
@@ -33,7 +33,7 @@ Transcripts and articles are cached per media ID. Running the same episode twice
 | Dependency | Required | Install |
 |------------|----------|---------|
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | For `source=youtube` | `brew install yt-dlp` or `pip install yt-dlp` |
-| [ffmpeg](https://ffmpeg.org/) | For audio files > 25 MB | `brew install ffmpeg` |
+| [ffmpeg](https://ffmpeg.org/) | Not required — WebM splitting is done natively | — |
 
 If `yt-dlp` is not installed and you run `odin-writer run` with the default YouTube source, you will get a clear error message with installation instructions.
 
