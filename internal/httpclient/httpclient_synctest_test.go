@@ -133,14 +133,14 @@ func TestRetry_429IsNotRetried(t *testing.T) {
 	})
 }
 
-// TestRetry_500ThenSuccess mirrors TestRetryOn500.
-func TestRetry_500ThenSuccess(t *testing.T) {
+// TestRetry_500IsNotRetried verifies that a 500 is returned immediately to the
+// caller without any backoff sleep — it is an application-level error, not a
+// transient gateway failure.
+func TestRetry_500IsNotRetried(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		rt := newPipeTransport(
-			http.StatusInternalServerError,
-			http.StatusInternalServerError,
-			http.StatusOK,
-		)
+		before := time.Now()
+		// Second response would be 200, but it must never be reached.
+		rt := newPipeTransport(http.StatusInternalServerError, http.StatusOK)
 
 		req, _ := http.NewRequest(http.MethodGet, "http://test/", nil)
 		resp, err := rt.RoundTrip(req)
@@ -149,8 +149,11 @@ func TestRetry_500ThenSuccess(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("want 200 after retries, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("want 500 returned as-is, got %d", resp.StatusCode)
+		}
+		if elapsed := time.Since(before); elapsed >= baseDelay {
+			t.Errorf("fake elapsed %v ≥ baseDelay %v — unexpected retry sleep", elapsed, baseDelay)
 		}
 	})
 }
@@ -173,15 +176,15 @@ func TestRetry_503ThenSuccess(t *testing.T) {
 	})
 }
 
-// TestRetry_ExhaustsMaxRetries verifies that after maxRetries+1 consecutive 5xx
+// TestRetry_ExhaustsMaxRetries verifies that after maxRetries+1 consecutive 503
 // responses the transport returns the last error response.
 // Without synctest this would sleep backoff(1)+backoff(2)+backoff(3) ≈ 7–10 s.
 func TestRetry_ExhaustsMaxRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		// Build a codes slice of maxRetries+1 copies of 500.
+		// Build a codes slice of maxRetries+1 copies of 503.
 		codes := make([]int, maxRetries+1)
 		for i := range codes {
-			codes[i] = http.StatusInternalServerError
+			codes[i] = http.StatusServiceUnavailable
 		}
 		rt := newPipeTransport(codes...)
 
@@ -193,8 +196,8 @@ func TestRetry_ExhaustsMaxRetries(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Errorf("want 500 after exhausted retries, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("want 503 after exhausted retries, got %d", resp.StatusCode)
 		}
 		// Fake time advanced by backoff(1)+backoff(2)+backoff(3) ≥ 7×baseDelay.
 		if elapsed := time.Since(before); elapsed < 7*baseDelay {
@@ -213,7 +216,7 @@ func TestRetry_BackoffGrowsPerAttempt(t *testing.T) {
 		handler := func(w http.ResponseWriter, r *http.Request) {
 			checkpoints = append(checkpoints, time.Now())
 			if callIdx < maxRetries {
-				w.WriteHeader(http.StatusInternalServerError)
+				w.WriteHeader(http.StatusServiceUnavailable)
 			} else {
 				w.WriteHeader(http.StatusOK)
 			}

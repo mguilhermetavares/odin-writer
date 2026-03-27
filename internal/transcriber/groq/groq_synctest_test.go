@@ -407,8 +407,8 @@ func TestTranscribeFile_429ExceedsMaxRetries(t *testing.T) {
 // an ~80 MB / 4-hour video broken into 4 segments of ~4000 s each.
 //
 // Splitting behaviour (time-based):
-//   - Each cluster individually ≈ 4000 s < 7200 s limit.
-//   - Two accumulated clusters ≈ 8000 s ≥ 7200 s → split threshold crossed.
+//   - Each cluster individually ≈ 4000 s ≥ 1140 s (maxSecondsPerSegment).
+//   - Each cluster exceeds the per-segment limit on its own → one segment each.
 //   - splitWebm therefore produces exactly 4 segments (one cluster each).
 //
 // Rate-limiter behaviour:

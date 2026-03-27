@@ -2,3 +2,4 @@ bin/
 *.out
 .env
 CLAUDE.md
+internal/transcriber/groq/testdata/

@@ -51,7 +51,10 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			continue
 		}
 
-		if resp.StatusCode < 500 {
+		// Only retry on 502/503/504 (gateway/availability errors).
+		// 500 (internal server error) indicates an application-level failure
+		// that won't be resolved by retrying the same request.
+		if resp.StatusCode != 502 && resp.StatusCode != 503 && resp.StatusCode != 504 {
 			return resp, nil
 		}
 

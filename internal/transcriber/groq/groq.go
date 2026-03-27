@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	transcriptionURL  = "https://api.groq.com/openai/v1/audio/transcriptions"
-	maxBytes          = 24 * 1024 * 1024 // 24MB — margem abaixo do limite de 25MB do Groq
-	maxSecondsPerHour = 7200             // limite de segundos de áudio por hora do Groq
+	transcriptionURL     = "https://api.groq.com/openai/v1/audio/transcriptions"
+	maxBytes             = 24 * 1024 * 1024 // 24MB — margem abaixo do limite de 25MB do Groq
+	maxSecondsPerSegment = 19 * 60          // 1140s — limite por request
+	maxSecondsPerHour    = 7200             // limite de segundos de áudio por hora do Groq (rate limiter)
 )
 
 // webmClusterID é o magic bytes do elemento Cluster no formato webm/EBML.
@@ -213,7 +214,7 @@ func clusterTimecodeMs(data []byte, clusterOffset, limit int) (ms int64, ok bool
 // Cada chunk é cortado nos limites dos elementos Cluster do formato webm,
 // respeitando dois limites:
 //   - tamanho máximo: maxBytes (24MB) menos o tamanho do header
-//   - duração máxima: maxSecondsPerHour (7200s) por segmento
+//   - duração máxima: maxSecondsPerSegment (1140s / 19min) por segmento
 //
 // O header original (EBML + Tracks + Info) é prefixado em cada chunk
 // para que o Whisper consiga decodificar cada segmento independentemente.
@@ -289,17 +290,23 @@ func splitWebm(audioPath string, totalSize int64, totalDurationSec int, outDir s
 		}
 
 		sizeExceeded := bodySize >= bodyBudget
-		timeExceeded := totalDurationSec > 0 && estimatedSecs >= maxSecondsPerHour
+		// EBML timecodes are authoritative — split regardless of totalDurationSec.
+		// Byte-proportion estimates are only meaningful when totalDurationSec > 0.
+		timeExceeded := estimatedSecs >= maxSecondsPerSegment &&
+			(hasTimecodes || totalDurationSec > 0)
 
 		if sizeExceeded || timeExceeded {
-			// Flush até ao cluster anterior (não inclui nextBoundary)
+			// Flush até ao cluster anterior quando possível.
+			// Se boundaries[i-1] <= chunkBegin o cluster atual já foi o início do chunk
+			// (acontece quando o limite é tão pequeno que cada cluster é flushed
+			// individualmente) — nesse caso incluir o cluster corrente no segmento.
 			var flushEnd, flushEndIdx int
-			if i > 0 {
+			if i > 0 && boundaries[i-1] > chunkBegin {
 				flushEnd = boundaries[i-1]
 				flushEndIdx = i // boundaries[i-1] = clusterOffsets[i]
 			} else {
-				flushEnd = nextBoundary // cluster único já excede o limite — incluir na mesma
-				flushEndIdx = 1
+				flushEnd = nextBoundary // cluster excede o limite sozinho — incluir na mesma
+				flushEndIdx = i + 1
 			}
 
 			var segSecs float64

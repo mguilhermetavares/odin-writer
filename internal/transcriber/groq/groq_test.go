@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -281,17 +282,17 @@ func TestSplitWebm_EachSegmentPrefixedWithHeader(t *testing.T) {
 }
 
 // TestSplitWebm_ExceedsDurationLimitSplitsByTime verifies that when the
-// estimated duration exceeds 7200s the file is split even if it would fit
-// within the byte budget.
+// estimated duration exceeds maxSecondsPerSegment (19min) the file is split
+// even if it would fit within the byte budget.
 func TestSplitWebm_ExceedsDurationLimitSplitsByTime(t *testing.T) {
-	// Two clusters of ~4MB each — well within 24MB byte limit.
-	// With totalDurationSec=14400 (4 hours), each cluster ~7200s → triggers time split.
+	// Three clusters of ~4MB each — well within 24MB byte limit.
+	// With totalDurationSec=4*maxSecondsPerSegment, each cluster ~1520s → triggers time split.
 	clusterSize := 4 * 1024 * 1024
 	path := writeTestWebm(t, 512, []int{clusterSize, clusterSize, clusterSize})
 	info, _ := os.Stat(path)
 
 	outDir := t.TempDir()
-	segs, err := splitWebm(path, info.Size(), 4*maxSecondsPerHour, outDir)
+	segs, err := splitWebm(path, info.Size(), 4*maxSecondsPerSegment, outDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -616,5 +617,449 @@ func TestTranscribeFile_Error500ReturnsErrorWithStatusCode(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected error message to contain %q, got %q", expected, errMsg)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ebmlIDWidth tests
+// ---------------------------------------------------------------------------
+
+// TestEBMLIDWidth_AllWidths verifies all valid leading-byte ranges and the
+// invalid range (0x00–0x0F).
+func TestEBMLIDWidth_AllWidths(t *testing.T) {
+	tests := []struct {
+		name      string
+		b         byte
+		wantWidth int
+	}{
+		{"1-byte 0x80", 0x80, 1},
+		{"1-byte 0xFF", 0xFF, 1},
+		{"2-byte 0x40", 0x40, 2},
+		{"2-byte 0x7F", 0x7F, 2},
+		{"3-byte 0x20", 0x20, 3},
+		{"3-byte 0x3F", 0x3F, 3},
+		{"4-byte 0x10", 0x10, 4},
+		{"4-byte 0x1F", 0x1F, 4},
+		{"invalid 0x00", 0x00, 0},
+		{"invalid 0x0F", 0x0F, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ebmlIDWidth(tc.b)
+			if got != tc.wantWidth {
+				t.Errorf("ebmlIDWidth(0x%02X) = %d, want %d", tc.b, got, tc.wantWidth)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ebmlVINTSize additional tests
+// ---------------------------------------------------------------------------
+
+// TestEBMLVINTSize_AtNonZeroPosition verifies that pos is respected when
+// the VINT does not start at the beginning of the slice.
+func TestEBMLVINTSize_AtNonZeroPosition(t *testing.T) {
+	// 3 padding bytes followed by a 1-byte VINT 0x83 (value=3).
+	data := []byte{0x00, 0x00, 0x00, 0x83}
+	val, width, ok := ebmlVINTSize(data, 3)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if width != 1 {
+		t.Errorf("width: got %d, want 1", width)
+	}
+	if val != 3 {
+		t.Errorf("val: got %d, want 3", val)
+	}
+}
+
+// TestEBMLVINTSize_InvalidLeadingByte verifies that 0x00 (no marker bit set)
+// causes ok=false — it would require a 9-byte VINT which is not allowed.
+func TestEBMLVINTSize_InvalidLeadingByte(t *testing.T) {
+	data := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	_, _, ok := ebmlVINTSize(data, 0)
+	if ok {
+		t.Fatal("expected ok=false for 0x00 leading byte (no marker bit)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// clusterTimecodeMs additional tests
+// ---------------------------------------------------------------------------
+
+// TestClusterTimecodeMs_SimpleBlockBeforeTimecodeReturnsFalse verifies that
+// reaching a SimpleBlock element (0xA3) before finding Timecode causes
+// ok=false, as per the EBML spec ordering guarantee.
+func TestClusterTimecodeMs_SimpleBlockBeforeTimecodeReturnsFalse(t *testing.T) {
+	// Cluster with a SimpleBlock child instead of Timecode.
+	// [Cluster ID 4B] [size VINT 1B=4] [SimpleBlock ID 0xA3] [size VINT 1B=2] [2 data bytes]
+	data := []byte{
+		0x1F, 0x43, 0xB6, 0x75, // Cluster ID
+		0x84,       // size VINT: 4 bytes
+		0xA3,       // SimpleBlock ID
+		0x82,       // size VINT: 2 bytes
+		0x01, 0x02, // data
+	}
+	_, ok := clusterTimecodeMs(data, 0, len(data))
+	if ok {
+		t.Fatal("expected ok=false when SimpleBlock appears before Timecode")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// splitWebm additional tests
+// ---------------------------------------------------------------------------
+
+// makeClusterWith4ByteTimecodeMs builds a minimal EBML Cluster containing a
+// 4-byte Timecode element, supporting timecodes up to ~49 days in ms.
+//
+//	[Cluster ID 4B] [size VINT 1B=6] [Timecode ID 1B] [size VINT 1B=4] [4B big-endian ms]
+func makeClusterWith4ByteTimecodeMs(ms uint32) []byte {
+	return []byte{
+		0x1F, 0x43, 0xB6, 0x75, // Cluster ID
+		0x86,                                             // size VINT: value=6 (6 bytes of children)
+		0xE7,                                             // Timecode ID
+		0x84,                                             // size VINT: value=4
+		byte(ms >> 24), byte(ms >> 16), byte(ms >> 8), byte(ms),
+	}
+}
+
+// newTranscriberForServer returns a Transcriber whose HTTP client redirects
+// all requests to srv, allowing end-to-end tests without hitting the real API.
+func newTranscriberForServer(t *testing.T, srv *httptest.Server) *Transcriber {
+	t.Helper()
+	return &Transcriber{
+		apiKey: "test-key",
+		client: &http.Client{
+			Transport: &rewriteHostTransport{
+				base:   srv.Client().Transport,
+				target: srv.URL,
+			},
+		},
+		rateLimiter: newRateLimiter(),
+	}
+}
+
+// TestSplitWebm_EachClusterExceedsLimitIndividually verifies the guard added
+// to handle the case where every single cluster already exceeds
+// maxSecondsPerSegment on its own.  The fix ensures that when
+// boundaries[i-1] == chunkBegin (previous cluster was already flushed),
+// the current cluster is included in its own segment rather than producing
+// a zero-length segment.
+func TestSplitWebm_EachClusterExceedsLimitIndividually(t *testing.T) {
+	// 4 clusters of 100 KB each.
+	// totalDurationSec chosen so each cluster ≈ 2×maxSecondsPerSegment.
+	const clusterBodySize = 100 * 1024
+	path := writeTestWebm(t, 256, []int{clusterBodySize, clusterBodySize, clusterBodySize, clusterBodySize})
+	info, _ := os.Stat(path)
+
+	outDir := t.TempDir()
+	// Each cluster ≈ ¼ of total file → ¼ of totalDurationSec.
+	// Set totalDurationSec so ¼ ≈ 2×maxSecondsPerSegment → no accumulated overflow.
+	totalDuration := 8 * maxSecondsPerSegment
+	segs, err := splitWebm(path, info.Size(), totalDuration, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(segs) != 4 {
+		t.Errorf("want 4 segments (one per cluster), got %d", len(segs))
+	}
+	for i, seg := range segs {
+		fi, _ := os.Stat(seg.path)
+		if fi.Size() == 0 {
+			t.Errorf("segment %d is empty", i)
+		}
+	}
+}
+
+// TestSplitWebm_ZeroTotalDurationNoTimeSplit verifies that when totalDurationSec
+// is 0 and no EBML timecodes are present, the file is never split by time —
+// only by size.
+func TestSplitWebm_ZeroTotalDurationNoTimeSplit(t *testing.T) {
+	// Many small clusters — no single one is near the byte budget.
+	path := writeTestWebm(t, 128, []int{1024, 1024, 1024, 1024, 1024})
+	info, _ := os.Stat(path)
+
+	outDir := t.TempDir()
+	segs, err := splitWebm(path, info.Size(), 0 /* unknown duration */, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(segs) != 1 {
+		t.Errorf("want 1 segment (no time split when duration unknown), got %d", len(segs))
+	}
+}
+
+// TestSplitWebm_WithEBMLTimecodesTriggersSplit verifies the hasTimecodes=true
+// path: when clusters embed valid EBML Timecodes whose differences exceed
+// maxSecondsPerSegment, the file is split based on timecodes, not byte size.
+func TestSplitWebm_WithEBMLTimecodesTriggersSplit(t *testing.T) {
+	// 3 clusters with timecodes 0 ms, 1200 s, 2400 s — each gap > 1140 s.
+	// The clusters themselves are tiny (11 bytes each) so byte budget is never hit.
+	header := make([]byte, 64) // arbitrary header, no cluster magic
+	for i := range header {
+		header[i] = 0xAA
+	}
+	c0 := makeClusterWith4ByteTimecodeMs(0)
+	c1 := makeClusterWith4ByteTimecodeMs(1_200_000) // 1200 s
+	c2 := makeClusterWith4ByteTimecodeMs(2_400_000) // 2400 s
+	data := append(header, append(c0, append(c1, c2...)...)...)
+
+	audioPath := filepath.Join(t.TempDir(), "ebml.webm")
+	if err := os.WriteFile(audioPath, data, 0600); err != nil {
+		t.Fatalf("writing test file: %v", err)
+	}
+	info, _ := os.Stat(audioPath)
+
+	outDir := t.TempDir()
+	// Pass a non-zero totalDurationSec so time-based split is eligible.
+	segs, err := splitWebm(audioPath, info.Size(), 3600, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(segs) != 3 {
+		t.Errorf("want 3 segments (one per cluster via EBML timecodes), got %d", len(segs))
+	}
+}
+
+// TestSplitWebm_EBMLTimecodesApplyEvenWhenDurationUnknown verifies the fix to
+// timeExceeded: EBML timecodes are authoritative and must trigger splits even
+// when totalDurationSec=0 (duration not supplied by the caller).
+func TestSplitWebm_EBMLTimecodesApplyEvenWhenDurationUnknown(t *testing.T) {
+	header := make([]byte, 64)
+	for i := range header {
+		header[i] = 0xAA
+	}
+	c0 := makeClusterWith4ByteTimecodeMs(0)
+	c1 := makeClusterWith4ByteTimecodeMs(1_200_000)
+	c2 := makeClusterWith4ByteTimecodeMs(2_400_000)
+	data := append(header, append(c0, append(c1, c2...)...)...)
+
+	audioPath := filepath.Join(t.TempDir(), "ebml_nodur.webm")
+	if err := os.WriteFile(audioPath, data, 0600); err != nil {
+		t.Fatalf("writing test file: %v", err)
+	}
+	info, _ := os.Stat(audioPath)
+
+	outDir := t.TempDir()
+	segs, err := splitWebm(audioPath, info.Size(), 0 /* duration unknown */, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(segs) != 3 {
+		t.Errorf("want 3 segments (EBML timecodes authoritative even without duration), got %d", len(segs))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Transcribe end-to-end tests
+// ---------------------------------------------------------------------------
+
+// TestTranscribe_SmallFileUsesDirectPath verifies that a file under maxBytes
+// is sent as a single request without splitting.
+func TestTranscribe_SmallFileUsesDirectPath(t *testing.T) {
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		fmt.Fprint(w, "transcrição direta")
+	}))
+	defer srv.Close()
+
+	audioPath := audioFilePath(t) // a few bytes — well under 24 MB
+	tr := newTranscriberForServer(t, srv)
+
+	got, err := tr.Transcribe(context.Background(), audioPath, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "transcrição direta" {
+		t.Errorf("got %q, want %q", got, "transcrição direta")
+	}
+	if requestCount != 1 {
+		t.Errorf("want exactly 1 request (no splitting), got %d", requestCount)
+	}
+}
+
+// TestTranscribeSegmented_SegmentErrorAbortsPipeline verifies that when a
+// segment fails, the whole transcription is aborted and an error is returned.
+// Uses time-based splitting to avoid allocating large test data.
+func TestTranscribeSegmented_SegmentErrorAbortsPipeline(t *testing.T) {
+	const clusterBodySize = 100 * 1024
+	audioData := makeTestWebm(256, []int{clusterBodySize, clusterBodySize, clusterBodySize})
+	audioPath := filepath.Join(t.TempDir(), "segmented.webm")
+	if err := os.WriteFile(audioPath, audioData, 0600); err != nil {
+		t.Fatalf("writing audio: %v", err)
+	}
+
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if requestCount == 1 {
+			fmt.Fprint(w, "seg1 ok")
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":{"message":"internal error"}}`)
+		}
+	}))
+	defer srv.Close()
+
+	tr := newTranscriberForServer(t, srv)
+	// totalDurationSec large enough that each cluster >> maxSecondsPerSegment.
+	_, err := tr.transcribeSegmented(context.Background(), audioPath, int64(len(audioData)), 8*maxSecondsPerSegment)
+	if err == nil {
+		t.Fatal("expected error when a segment fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "segmento") {
+		t.Errorf("error should mention 'segmento', got: %v", err)
+	}
+	if requestCount < 2 {
+		t.Errorf("expected at least 2 requests, got %d", requestCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Real-file scenario tests (inspired by MVP #250 — 83MB / 5693s / 570 clusters)
+// ---------------------------------------------------------------------------
+
+// TestSplitWebm_LargeHeader10KB_PrefixedOnAllSegments verifies that a header
+// of realistic size (~10 KB, as produced by yt-dlp) is correctly prepended to
+// every output segment and that bodyBudget accounts for the header size.
+func TestSplitWebm_LargeHeader10KB_PrefixedOnAllSegments(t *testing.T) {
+	headerSize := 10 * 1024
+	halfBody := maxBytes/2 + 512*1024 // each cluster > half the budget → forces 2 segments
+	path := writeTestWebm(t, headerSize, []int{halfBody, halfBody})
+	originalData, _ := os.ReadFile(path)
+	header := originalData[:headerSize]
+
+	info, _ := os.Stat(path)
+	outDir := t.TempDir()
+	segs, err := splitWebm(path, info.Size(), 0, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(segs) < 2 {
+		t.Fatalf("expected at least 2 segments (byte limit), got %d", len(segs))
+	}
+	for i, seg := range segs {
+		segData, err := os.ReadFile(seg.path)
+		if err != nil {
+			t.Fatalf("segment %d: read error: %v", i, err)
+		}
+		if len(segData) < headerSize {
+			t.Errorf("segment %d: shorter than header (%d < %d)", i, len(segData), headerSize)
+			continue
+		}
+		for j, b := range header {
+			if segData[j] != b {
+				t.Errorf("segment %d: header byte %d mismatch: got %02x, want %02x", i, j, segData[j], b)
+				break
+			}
+		}
+	}
+}
+
+// TestSplitWebm_SmallLastClusterAlwaysIncluded verifies the "remainder" code
+// path: after all large clusters are split individually, a tiny final cluster
+// (like the 37s / 0.5MB tail of MVP #250) is written as the last segment.
+func TestSplitWebm_SmallLastClusterAlwaysIncluded(t *testing.T) {
+	const largeCluster = 100 * 1024 // triggers individual split
+	const tinyCluster = 512         // well under any limit
+	path := writeTestWebm(t, 256, []int{largeCluster, largeCluster, largeCluster, tinyCluster})
+	info, _ := os.Stat(path)
+
+	outDir := t.TempDir()
+	// Each large cluster ≈ 2×maxSecondsPerSegment → split individually.
+	segs, err := splitWebm(path, info.Size(), 8*maxSecondsPerSegment, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(segs) < 2 {
+		t.Fatalf("expected multiple segments, got %d", len(segs))
+	}
+
+	// Last segment must exist and contain the tiny cluster (non-empty body).
+	last := segs[len(segs)-1]
+	fi, err := os.Stat(last.path)
+	if err != nil {
+		t.Fatalf("last segment stat error: %v", err)
+	}
+	// header (256) + cluster ID (4) + tiny data (512) = 772 bytes minimum
+	const minLastSize = int64(256 + 4 + tinyCluster)
+	if fi.Size() < minLastSize {
+		t.Errorf("last segment too small: %d bytes, want at least %d (tiny cluster not included)",
+			fi.Size(), minLastSize)
+	}
+}
+
+// TestSplitWebm_NoDataLostOrDuplicated verifies the coverage invariant:
+// the sum of all segment bodies (excluding the repeated header) must equal
+// the total body of the original file.  Catches off-by-one errors in
+// cluster-offset boundary handling.
+func TestSplitWebm_NoDataLostOrDuplicated(t *testing.T) {
+	const headerSize = 256
+	halfBody := maxBytes/2 + 512*1024
+	path := writeTestWebm(t, headerSize, []int{halfBody, halfBody, halfBody})
+	info, _ := os.Stat(path)
+	originalData, _ := os.ReadFile(path)
+	totalBodyExpected := len(originalData) - headerSize
+
+	outDir := t.TempDir()
+	segs, err := splitWebm(path, info.Size(), 0, outDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	totalBodyActual := 0
+	for i, seg := range segs {
+		segData, err := os.ReadFile(seg.path)
+		if err != nil {
+			t.Fatalf("segment %d: read error: %v", i, err)
+		}
+		bodyInSeg := len(segData) - headerSize
+		if bodyInSeg < 0 {
+			t.Errorf("segment %d is shorter than header (%d bytes)", i, len(segData))
+			continue
+		}
+		totalBodyActual += bodyInSeg
+	}
+
+	if totalBodyActual != totalBodyExpected {
+		t.Errorf("body coverage mismatch: segments contain %d bytes, original body is %d bytes",
+			totalBodyActual, totalBodyExpected)
+	}
+}
+
+// TestTranscribeSegmented_PartsJoinedWithSpace verifies that transcribed
+// segments are joined with a single space — critical for sentence continuity
+// at split boundaries.
+func TestTranscribeSegmented_PartsJoinedWithSpace(t *testing.T) {
+	const clusterBodySize = 100 * 1024
+	audioData := makeTestWebm(256, []int{clusterBodySize, clusterBodySize})
+	audioPath := filepath.Join(t.TempDir(), "twoparts.webm")
+	if err := os.WriteFile(audioPath, audioData, 0600); err != nil {
+		t.Fatalf("writing audio: %v", err)
+	}
+
+	responses := []string{"final da primeira parte", "início da segunda parte"}
+	idx := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, responses[idx])
+		idx++
+	}))
+	defer srv.Close()
+
+	tr := newTranscriberForServer(t, srv)
+	// totalDurationSec chosen so each half ≈ 2×maxSecondsPerSegment (split triggers)
+	// but stays well under maxSecondsPerHour (no rate-limiter wait in real time).
+	totalDuration := 4 * maxSecondsPerSegment // each segment ≈ 2×1140 = 2280s < 7200
+	got, err := tr.transcribeSegmented(context.Background(), audioPath, int64(len(audioData)), totalDuration)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "final da primeira parte início da segunda parte"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
