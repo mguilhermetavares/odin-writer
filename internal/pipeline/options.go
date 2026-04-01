@@ -1,5 +1,13 @@
 package pipeline
 
+// RunResult holds the outcome of a successful pipeline run.
+type RunResult struct {
+	MediaID      string
+	ArticleTitle string
+	DraftID      string
+	Skipped      bool // true when the media was already processed and no work was done
+}
+
 // RunOptions controls the behaviour of a pipeline run.
 type RunOptions struct {
 	// Source selects the media source: "youtube" (default) or "file".

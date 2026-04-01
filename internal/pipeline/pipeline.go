@@ -45,13 +45,13 @@ func NewRunner(
 }
 
 // Run executes the pipeline according to the provided options.
-func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
+func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 	log.Println("odin-writer starting")
 
 	// Create temp dir for audio downloads
 	tmpDir, err := os.MkdirTemp("", "odin-writer-audio-*")
 	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
+		return nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -63,7 +63,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 		Title:   opts.Title,
 	}, tmpDir)
 	if err != nil {
-		return fmt.Errorf("preparing source: %w", err)
+		return nil, fmt.Errorf("preparing source: %w", err)
 	}
 	log.Printf("  media: [%s] %s", media.ID, media.Title)
 
@@ -78,24 +78,24 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 	if !opts.Force && !opts.RewriteOnly {
 		processed, err := r.state.WasProcessed(media.ID)
 		if err != nil {
-			return fmt.Errorf("checking state: %w", err)
+			return nil, fmt.Errorf("checking state: %w", err)
 		}
 		if processed {
 			log.Println("nothing to do — already processed. use --force to reprocess.")
-			return nil
+			return &RunResult{MediaID: media.ID, Skipped: true}, nil
 		}
 	}
 
 	// 3. Transcription
 	transcript, err := r.transcribe(ctx, media, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 4. Article generation
 	article, err := r.generateArticle(ctx, media, transcript, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 5. Publish (skip for --dry-run and --rewrite-only)
@@ -103,20 +103,20 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 		log.Println("--dry-run: skipping publish to Sanity")
 		log.Printf("  title  : %s", article.Title)
 		log.Printf("  excerpt: %s", article.Excerpt)
-		return nil
+		return &RunResult{MediaID: media.ID, ArticleTitle: article.Title}, nil
 	}
 
 	if opts.RewriteOnly {
 		log.Println("--rewrite-only: article regenerated, skipping publish")
 		log.Printf("  title: %s", article.Title)
 		log.Printf("  cache: %s", media.ID)
-		return nil
+		return &RunResult{MediaID: media.ID, ArticleTitle: article.Title}, nil
 	}
 
 	log.Println("publishing draft to Sanity...")
 	docID, err := r.publisher.CreateDraft(ctx, article, media.ID)
 	if err != nil {
-		return fmt.Errorf("publishing to Sanity: %w", err)
+		return nil, fmt.Errorf("publishing to Sanity: %w", err)
 	}
 
 	// 6. Save state
@@ -134,7 +134,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) error {
 	log.Printf("  draft  : %s", docID)
 	log.Println("  review : https://minnesotavikingsbr.com/studio")
 
-	return nil
+	return &RunResult{MediaID: media.ID, ArticleTitle: article.Title, DraftID: docID}, nil
 }
 
 func (r *Runner) transcribe(ctx context.Context, media *source.Media, opts RunOptions) (string, error) {

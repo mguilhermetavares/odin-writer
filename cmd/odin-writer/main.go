@@ -122,7 +122,7 @@ func runCmd(args []string, envFile string) {
 		Background:  false,
 	}
 
-	if err := runner.Run(context.Background(), opts); err != nil {
+	if _, err := runner.Run(context.Background(), opts); err != nil {
 		log.Fatalf("error: %v", err)
 	}
 }

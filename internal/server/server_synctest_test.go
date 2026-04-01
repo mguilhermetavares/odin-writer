@@ -3,9 +3,14 @@ package server
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/mguilhermetavares/odin-writer/internal/cache"
+	"github.com/mguilhermetavares/odin-writer/internal/pipeline"
+	"github.com/mguilhermetavares/odin-writer/internal/state"
 )
 
 // ---------------------------------------------------------------------------
@@ -169,9 +174,9 @@ func TestServer_NotifierCalledOnError(t *testing.T) {
 	})
 }
 
-// TestServer_NotifierNotCalledOnSuccess verifies that the notifier is not
-// called when the pipeline succeeds.
-func TestServer_NotifierNotCalledOnSuccess(t *testing.T) {
+// TestServer_NotifierCalledOnSuccess verifies that the notifier is called
+// when the pipeline succeeds.
+func TestServer_NotifierCalledOnSuccess(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		src := &countingSource{media: successMedia("vid-ok")}
 		n := &recordingNotifier{}
@@ -183,8 +188,40 @@ func TestServer_NotifierNotCalledOnSuccess(t *testing.T) {
 
 		synctest.Wait()
 
+		if got := n.calls.Load(); got != 1 {
+			t.Errorf("notifier called %d times on success, want 1", got)
+		}
+
+		cancel()
+		<-done
+	})
+}
+
+// TestServer_NotifierNotCalledWhenSkipped verifies that the notifier is not
+// called when the pipeline skips an already-processed video.
+func TestServer_NotifierNotCalledWhenSkipped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		media := successMedia("vid-skip")
+		src := &countingSource{media: media}
+		n := &recordingNotifier{}
+
+		dir := t.TempDir()
+		c := cache.New(filepath.Join(dir, "cache"))
+		s := state.New(filepath.Join(dir, "state.json"))
+		if err := s.Record(state.Entry{SourceID: "youtube", MediaID: media.ID}); err != nil {
+			t.Fatalf("failed to pre-record state: %v", err)
+		}
+		runner := pipeline.NewRunner(src, &noopTranscriber{}, &noopWriter{}, &noopPublisher{}, c, s)
+		srv := New(runner, time.Hour).WithNotifier(n)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { srv.Run(ctx); close(done) }()
+
+		synctest.Wait()
+
 		if got := n.calls.Load(); got != 0 {
-			t.Errorf("notifier called %d times on success, want 0", got)
+			t.Errorf("notifier called %d times on skipped run, want 0", got)
 		}
 
 		cancel()

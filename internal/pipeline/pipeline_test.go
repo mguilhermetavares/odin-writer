@@ -109,7 +109,7 @@ func TestRun_FullPipeline_NoCache(t *testing.T) {
 	pub := &mockPublisher{docID: "draft-123"}
 
 	runner := newTestRunner(t, src, tr, wr, pub)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRun_SkipWhenAlreadyProcessed(t *testing.T) {
 	}
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestRun_ForceReprocessesWhenAlreadyProcessed(t *testing.T) {
 	}
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube", Force: true})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube", Force: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestRun_DryRun_DoesNotPublish(t *testing.T) {
 	pub := &mockPublisher{}
 
 	runner := newTestRunner(t, src, tr, wr, pub)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube", DryRun: true})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube", DryRun: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestRun_RewriteOnly_UsesTranscriptFromCache(t *testing.T) {
 	}
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube", RewriteOnly: true})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube", RewriteOnly: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestRun_RewriteOnly_FailsWithNoCache(t *testing.T) {
 	pub := &mockPublisher{}
 
 	runner := newTestRunner(t, src, tr, wr, pub)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube", RewriteOnly: true})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube", RewriteOnly: true})
 	if err == nil {
 		t.Fatal("expected error when no cached transcript, got nil")
 	}
@@ -269,7 +269,7 @@ func TestRun_SavesTranscriptToCache(t *testing.T) {
 	s := state.New(filepath.Join(dir, "state.json"))
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	if err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
+	if _, err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestRun_LoadsTranscriptFromCache_SkipsTranscriber(t *testing.T) {
 	}
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	if err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
+	if _, err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -321,7 +321,7 @@ func TestRun_SavesArticleToCache(t *testing.T) {
 	s := state.New(filepath.Join(dir, "state.json"))
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	if err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
+	if _, err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -358,7 +358,7 @@ func TestRun_LoadsArticleFromCache_SkipsWriter(t *testing.T) {
 	}
 
 	runner := NewRunner(src, tr, wr, pub, c, s)
-	if err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
+	if _, err := runner.Run(context.Background(), RunOptions{Source: "youtube"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -375,7 +375,7 @@ func TestRun_FailsIfSourceReturnsError(t *testing.T) {
 	pub := &mockPublisher{}
 
 	runner := newTestRunner(t, src, tr, wr, pub)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
 	if err == nil {
 		t.Fatal("expected error from source, got nil")
 	}
@@ -393,7 +393,7 @@ func TestRun_FailsIfTranscriberReturnsError(t *testing.T) {
 	pub := &mockPublisher{}
 
 	runner := newTestRunner(t, src, tr, wr, pub)
-	err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
+	_, err := runner.Run(context.Background(), RunOptions{Source: "youtube"})
 	if err == nil {
 		t.Fatal("expected error from transcriber, got nil")
 	}

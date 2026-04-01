@@ -21,7 +21,7 @@ func New(runner *pipeline.Runner, interval time.Duration) *Server {
 	return &Server{runner: runner, interval: interval}
 }
 
-// WithNotifier attaches a notifier that is called on pipeline errors.
+// WithNotifier attaches a notifier that is called on pipeline errors and successes.
 func (s *Server) WithNotifier(n notifier.Notifier) *Server {
 	s.notifier = n
 	return s
@@ -50,18 +50,25 @@ func (s *Server) Run(ctx context.Context) {
 
 func (s *Server) tick(ctx context.Context) {
 	log.Println("server: checking for new videos...")
-	err := s.runner.Run(ctx, pipeline.RunOptions{
+	result, err := s.runner.Run(ctx, pipeline.RunOptions{
 		Source: "youtube",
 	})
 	if err != nil {
 		log.Printf("server: pipeline error: %v", err)
-		if s.notifier != nil {
-			msg := fmt.Sprintf("odin-writer pipeline error: %v", err)
-			if nerr := s.notifier.Notify(ctx, msg); nerr != nil {
-				log.Printf("server: failed to send notification: %v", nerr)
-			}
-		}
+		s.notify(ctx, fmt.Sprintf("odin-writer pipeline error: %v", err))
 		return
 	}
 	log.Printf("server: next check in %s", s.interval)
+	if !result.Skipped {
+		s.notify(ctx, fmt.Sprintf("odin-writer: article published — %s", result.ArticleTitle))
+	}
+}
+
+func (s *Server) notify(ctx context.Context, msg string) {
+	if s.notifier == nil {
+		return
+	}
+	if err := s.notifier.Notify(ctx, msg); err != nil {
+		log.Printf("server: failed to send notification: %v", err)
+	}
 }
