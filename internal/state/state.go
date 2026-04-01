@@ -110,12 +110,26 @@ func (m *Manager) load() (*state, error) {
 }
 
 func (m *Manager) save(s *state) error {
-	if err := os.MkdirAll(filepath.Dir(m.path), 0o755); err != nil {
+	dir := filepath.Dir(m.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.path, data, 0o644)
+	tmp, err := os.CreateTemp(dir, ".state-*.json")
+	if err != nil {
+		return fmt.Errorf("creating temp state file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return fmt.Errorf("writing temp state file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return fmt.Errorf("closing temp state file: %w", err)
+	}
+	return os.Rename(tmp.Name(), m.path)
 }
