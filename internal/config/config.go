@@ -20,10 +20,12 @@ type Config struct {
 	HomeDir          string
 	StateFile        string
 	CacheDir         string
-	ClaudeModel      string
-	TranscriptLimit  int
-	PollInterval     time.Duration
-	StyleName        string
+	ClaudeModel        string
+	TranscriptLimit    int
+	PollInterval       time.Duration
+	StyleName          string
+	TelegramBotToken   string
+	TelegramChatID     string
 }
 
 func Load(envFile string) (*Config, error) {
@@ -48,10 +50,12 @@ func Load(envFile string) (*Config, error) {
 		HomeDir:          home,
 		StateFile:        getEnvOrDefault("STATE_FILE", filepath.Join(home, "state.json")),
 		CacheDir:         getEnvOrDefault("CACHE_DIR", filepath.Join(home, "cache")),
-		ClaudeModel:     getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),
-		TranscriptLimit: getEnvInt("TRANSCRIPT_LIMIT", 150000),
-		PollInterval:    getEnvDuration("POLL_INTERVAL", 24*time.Hour),
-		StyleName:       getEnvOrDefault("STYLE", "esportivo"),
+		ClaudeModel:      getEnvOrDefault("CLAUDE_MODEL", "claude-opus-4-6"),
+		TranscriptLimit:  getEnvInt("TRANSCRIPT_LIMIT", 150000),
+		PollInterval:     getEnvDuration("POLL_INTERVAL", 24*time.Hour),
+		StyleName:        getEnvOrDefault("STYLE", "esportivo"),
+		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramChatID:   os.Getenv("TELEGRAM_CHAT_ID"),
 	}
 
 	if err := cfg.validate(); err != nil {

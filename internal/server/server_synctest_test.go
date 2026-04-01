@@ -143,6 +143,82 @@ func TestServer_TickErrorDoesNotStopServer(t *testing.T) {
 	})
 }
 
+// TestServer_NotifierCalledOnError verifies that the notifier is called when
+// the pipeline returns an error.
+func TestServer_NotifierCalledOnError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		src := &countingSource{err: fmt.Errorf("transcription failed")}
+		n := &recordingNotifier{}
+		srv := New(newRunner(t, src, &noopPublisher{}), time.Hour).WithNotifier(n)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { srv.Run(ctx); close(done) }()
+
+		synctest.Wait()
+
+		if got := n.calls.Load(); got != 1 {
+			t.Errorf("notifier called %d times, want 1", got)
+		}
+		if n.last == "" {
+			t.Error("notifier message is empty")
+		}
+
+		cancel()
+		<-done
+	})
+}
+
+// TestServer_NotifierNotCalledOnSuccess verifies that the notifier is not
+// called when the pipeline succeeds.
+func TestServer_NotifierNotCalledOnSuccess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		src := &countingSource{media: successMedia("vid-ok")}
+		n := &recordingNotifier{}
+		srv := New(newRunner(t, src, &noopPublisher{}), time.Hour).WithNotifier(n)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { srv.Run(ctx); close(done) }()
+
+		synctest.Wait()
+
+		if got := n.calls.Load(); got != 0 {
+			t.Errorf("notifier called %d times on success, want 0", got)
+		}
+
+		cancel()
+		<-done
+	})
+}
+
+// TestServer_NotifierFailureDoesNotStopServer verifies that a notifier error
+// is logged but does not crash the server or prevent subsequent ticks.
+func TestServer_NotifierFailureDoesNotStopServer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		src := &countingSource{err: fmt.Errorf("source down")}
+		n := &recordingNotifier{err: fmt.Errorf("telegram unreachable")}
+		interval := 2 * time.Minute
+		srv := New(newRunner(t, src, &noopPublisher{}), interval).WithNotifier(n)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { srv.Run(ctx); close(done) }()
+
+		synctest.Wait()
+
+		time.Sleep(interval)
+		synctest.Wait()
+
+		if got := src.calls.Load(); got != 2 {
+			t.Errorf("want 2 ticks despite notifier failure, got %d", got)
+		}
+
+		cancel()
+		<-done
+	})
+}
+
 // TestServer_FakeTimeDoesNotAdvanceDuringTick verifies that fake time stays
 // still while the tick itself is executing — it only advances while goroutines
 // are blocked on select / timer.

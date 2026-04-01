@@ -13,6 +13,18 @@ import (
 	"github.com/mguilhermetavares/odin-writer/internal/writer"
 )
 
+type recordingNotifier struct {
+	calls atomic.Int64
+	last  string
+	err   error
+}
+
+func (n *recordingNotifier) Notify(_ context.Context, msg string) error {
+	n.calls.Add(1)
+	n.last = msg
+	return n.err
+}
+
 // ---------------------------------------------------------------------------
 // Mock source / transcriber / writer / publisher
 // ---------------------------------------------------------------------------

@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
+	"github.com/mguilhermetavares/odin-writer/internal/notifier"
 	"github.com/mguilhermetavares/odin-writer/internal/pipeline"
 )
 
@@ -12,10 +14,17 @@ import (
 type Server struct {
 	runner   *pipeline.Runner
 	interval time.Duration
+	notifier notifier.Notifier // nil means no notifications
 }
 
 func New(runner *pipeline.Runner, interval time.Duration) *Server {
 	return &Server{runner: runner, interval: interval}
+}
+
+// WithNotifier attaches a notifier that is called on pipeline errors.
+func (s *Server) WithNotifier(n notifier.Notifier) *Server {
+	s.notifier = n
+	return s
 }
 
 // Run starts the polling loop. It runs the pipeline immediately, then waits
@@ -46,6 +55,12 @@ func (s *Server) tick(ctx context.Context) {
 	})
 	if err != nil {
 		log.Printf("server: pipeline error: %v", err)
+		if s.notifier != nil {
+			msg := fmt.Sprintf("odin-writer pipeline error: %v", err)
+			if nerr := s.notifier.Notify(ctx, msg); nerr != nil {
+				log.Printf("server: failed to send notification: %v", nerr)
+			}
+		}
 		return
 	}
 	log.Printf("server: next check in %s", s.interval)

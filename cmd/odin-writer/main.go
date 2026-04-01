@@ -14,6 +14,7 @@ import (
 
 	"github.com/mguilhermetavares/odin-writer/internal/cache"
 	"github.com/mguilhermetavares/odin-writer/internal/config"
+	"github.com/mguilhermetavares/odin-writer/internal/notifier/telegram"
 	"github.com/mguilhermetavares/odin-writer/internal/pipeline"
 	"github.com/mguilhermetavares/odin-writer/internal/publisher/sanity"
 	"github.com/mguilhermetavares/odin-writer/internal/server"
@@ -195,6 +196,11 @@ func serverCmd(args []string, envFile string) {
 	src := youtube.New(cfg.YouTubeChannelID)
 	runner := mustBuildRunner(cfg, src)
 	srv := server.New(runner, cfg.PollInterval)
+
+	if cfg.TelegramBotToken != "" && cfg.TelegramChatID != "" {
+		srv = srv.WithNotifier(telegram.New(cfg.TelegramBotToken, cfg.TelegramChatID))
+		log.Println("  notifications: Telegram enabled")
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
