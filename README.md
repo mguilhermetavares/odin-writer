@@ -79,6 +79,8 @@ cp .env.example .env
 | `TRANSCRIPT_LIMIT` | no | Max characters of transcript sent to Claude (default: `150000`) |
 | `POLL_INTERVAL` | no | Polling interval for server mode (default: `24h`) |
 | `STYLE` | no | Writing style name or path (default: `esportivo`) |
+| `TELEGRAM_BOT_TOKEN` | no | Telegram bot token for pipeline notifications (server mode only) |
+| `TELEGRAM_CHAT_ID` | no | Telegram chat ID to receive notifications |
 
 ## Usage
 
@@ -130,6 +132,16 @@ odin-writer server -style ./my-style.json
 ```
 
 The process runs immediately on start, then again every `POLL_INTERVAL`. Errors are logged without stopping the loop. Graceful shutdown on `SIGINT` / `SIGTERM`.
+
+#### Telegram notifications
+
+When `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the server sends a Telegram message after each pipeline run:
+
+- **Success:** `odin-writer: article published — <article title>`
+- **Error:** `odin-writer pipeline error: <error detail>`
+- **Skipped** (video already processed): no notification sent
+
+If the Telegram API is unreachable, the error is logged and the server continues normally.
 
 ### `status` and `cache`
 
@@ -218,6 +230,8 @@ internal/
   state/                    # execution history as JSON
   pipeline/                 # Runner — orchestrates the 4 stages
   server/                   # polling loop for continuous mode
+  notifier/                 # Notifier interface
+    telegram/               # Telegram Bot API implementation
 ```
 
 ## Testing
