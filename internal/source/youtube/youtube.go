@@ -109,6 +109,7 @@ func (s *Source) fetchLatestFrom(ctx context.Context, url string) (*videoMeta, e
 	out, err := exec.CommandContext(ctx,
 		"yt-dlp",
 		"--playlist-end", "1",
+		"--match-filter", "live_status != is_upcoming",
 		"--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(duration)s",
 		"--no-warnings",
 		"--quiet",
