@@ -135,34 +135,33 @@ func (s *Source) fetchLatestFrom(ctx context.Context, url string) (*videoMeta, e
 	return meta, nil
 }
 
-// latestVideo returns the most recent content from the channel — video or live,
-// whichever was uploaded most recently.
+// latestVideo returns the most recent content from the channel across all tabs.
 func (s *Source) latestVideo(ctx context.Context) (*videoMeta, error) {
 	base := "https://www.youtube.com/channel/" + s.channelID
 
-	video, err := s.fetchLatestFrom(ctx, base+"/videos")
-	if err != nil {
-		return nil, fmt.Errorf("fetching latest video: %w", err)
-	}
-
-	live, err := s.fetchLatestFrom(ctx, base+"/streams")
-	if err != nil {
-		return nil, fmt.Errorf("fetching latest stream: %w", err)
-	}
-
-	switch {
-	case video == nil && live == nil:
-		return nil, fmt.Errorf("no videos or streams found for channel %s", s.channelID)
-	case video == nil:
-		return live, nil
-	case live == nil:
-		return video, nil
-	default:
-		if live.uploadDate > video.uploadDate {
-			return live, nil
+	tabs := []string{"/videos", "/streams", "/podcasts"}
+	candidates := make([]*videoMeta, 0, len(tabs))
+	for _, tab := range tabs {
+		m, err := s.fetchLatestFrom(ctx, base+tab)
+		if err != nil {
+			return nil, fmt.Errorf("fetching latest from %s: %w", tab, err)
 		}
-		return video, nil
+		if m != nil {
+			candidates = append(candidates, m)
+		}
 	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no videos or streams found for channel %s", s.channelID)
+	}
+
+	latest := candidates[0]
+	for _, m := range candidates[1:] {
+		if m.uploadDate > latest.uploadDate {
+			latest = m
+		}
+	}
+	return latest, nil
 }
 
 func (s *Source) downloadAudio(ctx context.Context, videoID, destDir string) (string, error) {
