@@ -44,7 +44,7 @@ Run "odin-writer <command> -h" for command-specific help.
 `
 
 func main() {
-	log.SetFlags(0)
+	log.SetFlags(log.LstdFlags)
 
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
