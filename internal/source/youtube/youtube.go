@@ -11,6 +11,8 @@ import (
 	"github.com/mguilhermetavares/odin-writer/internal/source"
 )
 
+const audioFormat = "bestaudio[ext=webm]/bestaudio"
+
 // Source fetches YouTube videos using yt-dlp.
 // Requires yt-dlp to be installed on the system.
 type Source struct {
@@ -168,9 +170,11 @@ func (s *Source) downloadAudio(ctx context.Context, videoID, destDir string) (st
 	template := filepath.Join(destDir, videoID+".%(ext)s")
 	url := "https://www.youtube.com/watch?v=" + videoID
 
+	// Prefer webm: the Groq transcriber can only segment webm files, and
+	// plain bestaudio often picks a higher-bitrate m4a for long videos.
 	cmd := exec.CommandContext(ctx,
 		"yt-dlp",
-		"-f", "bestaudio",
+		"-f", audioFormat,
 		"--output", template,
 		"--no-warnings",
 		url,

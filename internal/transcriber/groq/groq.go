@@ -237,8 +237,10 @@ func splitWebm(audioPath string, totalSize int64, totalDurationSec int, outDir s
 	}
 
 	if len(clusterOffsets) == 0 {
-		// Formato não reconhecido — devolver como segmento único
-		return []segment{{path: audioPath, estimatedSecs: float64(totalDurationSec)}}, nil
+		// Enviar o ficheiro inteiro garantiria um 413 do Groq: só chegamos aqui
+		// quando ele já excede maxBytes.
+		return nil, fmt.Errorf("cannot split %s (%d MB): no webm clusters found, only webm can be segmented",
+			filepath.Base(audioPath), totalSize/(1024*1024))
 	}
 
 	// Header = tudo antes do primeiro Cluster, com Duration removida.

@@ -194,23 +194,18 @@ func TestClusterTimecodeMs_LimitPreventsReadingIntoNextCluster(t *testing.T) {
 // splitWebm tests
 // ---------------------------------------------------------------------------
 
-// TestSplitWebm_SmallFileNoClusterReturnsOriginalAsSingleSegment verifies that
-// a file without any Cluster elements is returned as a single segment pointing
-// to the original path.
-func TestSplitWebm_SmallFileNoClusterReturnsOriginalAsSingleSegment(t *testing.T) {
+// TestSplitWebm_NoClustersReturnsError verifies that a non-webm file (e.g. m4a)
+// is rejected instead of being sent whole, which Groq would refuse with 413.
+func TestSplitWebm_NoClustersReturnsError(t *testing.T) {
 	path := writeTestWebm(t, 100, nil) // no clusters
 	info, _ := os.Stat(path)
 
-	outDir := t.TempDir()
-	segs, err := splitWebm(path, info.Size(), 0, outDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	segs, err := splitWebm(path, info.Size(), 0, t.TempDir())
+	if err == nil {
+		t.Fatalf("expected error, got %d segments", len(segs))
 	}
-	if len(segs) != 1 {
-		t.Fatalf("expected 1 segment, got %d", len(segs))
-	}
-	if segs[0].path != path {
-		t.Errorf("expected original path %q, got %q", path, segs[0].path)
+	if !strings.Contains(err.Error(), "no webm clusters") {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }
 

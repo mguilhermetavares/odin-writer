@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mguilhermetavares/odin-writer/internal/source"
@@ -275,6 +276,50 @@ exit 0
 	if media.SourceID != "youtube" {
 		t.Errorf("expected sourceID=youtube, got %q", media.SourceID)
 	}
+}
+
+// 12. downloadAudio asks yt-dlp for webm first, since only webm can be segmented.
+func TestDownloadAudio_PrefersWebm(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--output" ]; then
+    touch "$(printf '%%s' "$arg" | sed 's/%%(ext)s/webm/')"
+  fi
+  prev="$arg"
+done
+`, argsPath)
+	if err := os.WriteFile(filepath.Join(dir, "yt-dlp"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake yt-dlp: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := New("")
+	path, err := s.downloadAudio(context.Background(), "testvid", t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if filepath.Ext(path) != ".webm" {
+		t.Errorf("expected .webm file, got %q", path)
+	}
+
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for i, a := range args {
+		if a == "-f" && i+1 < len(args) {
+			if args[i+1] != "bestaudio[ext=webm]/bestaudio" {
+				t.Errorf("unexpected format selector %q", args[i+1])
+			}
+			return
+		}
+	}
+	t.Fatalf("-f flag not passed to yt-dlp: %v", args)
 }
 
 // ---------------------------------------------------------------------------
