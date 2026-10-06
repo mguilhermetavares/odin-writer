@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,7 +63,7 @@ func TestFetchLatestFrom_ParsesValidOutput(t *testing.T) {
 	restore := installFakeYtDlp(t, "abc123\tGreat Video\t20240315\t3600", 0)
 	defer restore()
 
-	s := New("CHAN1")
+	s := New("CHAN1", nil)
 	meta, err := s.fetchLatestFrom(context.Background(), "https://example.com/playlist")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -88,7 +90,7 @@ func TestFetchLatestFrom_EmptyOutputReturnsNil(t *testing.T) {
 	restore := installFakeYtDlp(t, "", 0)
 	defer restore()
 
-	s := New("CHAN1")
+	s := New("CHAN1", nil)
 	meta, err := s.fetchLatestFrom(context.Background(), "https://example.com/playlist")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -103,13 +105,90 @@ func TestFetchLatestFrom_CommandFailureReturnsNil(t *testing.T) {
 	restore := installFakeYtDlp(t, "", 1)
 	defer restore()
 
-	s := New("CHAN1")
+	s := New("CHAN1", nil)
 	meta, err := s.fetchLatestFrom(context.Background(), "https://example.com/playlist")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if meta != nil {
 		t.Errorf("expected nil meta on command failure, got %+v", meta)
+	}
+}
+
+const streamsOutput = "react1\tLIVE REACT VIKINGS X DOLPHINS\t20261004\t11694\n" +
+	"mvp265\t🎙️ MVP #265 - PIOR 4-0 DA HISTÓRIA?\t20261003\t5668\n" +
+	"mvp264\t🎙️ MVP #264 - TUDO sobre a TROCA\t20260929\t6336\n"
+
+// fetchLatestFrom with a title filter skips newer non-matching items.
+func TestFetchLatestFrom_TitleFilterSkipsNonMatching(t *testing.T) {
+	restore := installFakeYtDlp(t, streamsOutput, 0)
+	defer restore()
+
+	s := New("CHAN1", regexp.MustCompile(`MVP #\d+`))
+	meta, err := s.fetchLatestFrom(context.Background(), "https://example.com/playlist")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta == nil || meta.id != "mvp265" {
+		t.Fatalf("expected mvp265, got %+v", meta)
+	}
+}
+
+// fetchLatestFrom returns nil when no inspected item matches the filter.
+func TestFetchLatestFrom_TitleFilterNoMatchReturnsNil(t *testing.T) {
+	restore := installFakeYtDlp(t, streamsOutput, 0)
+	defer restore()
+
+	s := New("CHAN1", regexp.MustCompile(`Entrevista`))
+	meta, err := s.fetchLatestFrom(context.Background(), "https://example.com/playlist")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil meta, got %+v", meta)
+	}
+}
+
+// fetchLatestFrom only looks deeper into the playlist when a filter is set.
+func TestFetchLatestFrom_ScanDepthDependsOnFilter(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter *regexp.Regexp
+		want   string
+	}{
+		{"no filter", nil, "1"},
+		{"with filter", regexp.MustCompile(`MVP`), strconv.Itoa(filteredScanDepth)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			argsPath := filepath.Join(dir, "args.txt")
+			script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsPath)
+			if err := os.WriteFile(filepath.Join(dir, "yt-dlp"), []byte(script), 0o755); err != nil {
+				t.Fatalf("write fake yt-dlp: %v", err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			s := New("CHAN1", tt.filter)
+			if _, err := s.fetchLatestFrom(context.Background(), "https://example.com/playlist"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			raw, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatalf("read recorded args: %v", err)
+			}
+			args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+			for i, a := range args {
+				if a == "--playlist-end" && i+1 < len(args) {
+					if args[i+1] != tt.want {
+						t.Errorf("--playlist-end = %s, want %s", args[i+1], tt.want)
+					}
+					return
+				}
+			}
+			t.Fatalf("--playlist-end not passed: %v", args)
+		})
 	}
 }
 
@@ -188,7 +267,7 @@ func TestVideoMetadata_ParsesAllFields(t *testing.T) {
 	restore := installFakeYtDlp(t, "xyz789\tAwesome Episode\t20231201\t5400", 0)
 	defer restore()
 
-	s := New("")
+	s := New("", nil)
 	meta, err := s.videoMetadata(context.Background(), "xyz789")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -212,7 +291,7 @@ func TestVideoMetadata_ReturnsErrorOnCommandFailure(t *testing.T) {
 	restore := installFakeYtDlp(t, "", 1)
 	defer restore()
 
-	s := New("")
+	s := New("", nil)
 	_, err := s.videoMetadata(context.Background(), "failvid")
 	if err == nil {
 		t.Fatal("expected error when yt-dlp exits non-zero, got nil")
@@ -257,7 +336,7 @@ exit 0
 	os.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
 	defer os.Setenv("PATH", origPath)
 
-	s := New("")
+	s := New("", nil)
 	destDir := t.TempDir()
 	opts := source.Options{VideoID: "testvid"}
 	media, err := s.Prepare(context.Background(), opts, destDir)
@@ -297,7 +376,7 @@ done
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New("")
+	s := New("", nil)
 	path, err := s.downloadAudio(context.Background(), "testvid", t.TempDir())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

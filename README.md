@@ -74,6 +74,7 @@ cp .env.example .env
 | `ANTHROPIC_API_KEY` | yes | Anthropic API key |
 | `GROQ_API_KEY` | yes | Groq API key |
 | `YOUTUBE_CHANNEL_ID` | no | YouTube channel ID (required for `source=youtube` and `server` mode) |
+| `YOUTUBE_TITLE_FILTER` | no | Regex (Go syntax) the title must match for auto mode to pick a video, e.g. `MVP #\d+`. The 10 most recent items of each tab are inspected. `-video-id` ignores it |
 | `CLAUDE_MODEL` | no | Claude model to use (default: `claude-opus-4-6`) |
 | `ODIN_WRITER_HOME` | no | Base directory for state and cache (default: `/var/odin-writer`) |
 | `TRANSCRIPT_LIMIT` | no | Max characters of transcript sent to Claude (default: `150000`) |

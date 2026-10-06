@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +18,11 @@ type Config struct {
 	AnthropicAPIKey  string
 	GroqAPIKey       string
 	YouTubeChannelID string
-	HomeDir          string
-	StateFile        string
-	CacheDir         string
+	// YouTubeTitleFilter, when set, restricts auto mode to videos whose title matches.
+	YouTubeTitleFilter *regexp.Regexp
+	HomeDir            string
+	StateFile          string
+	CacheDir           string
 	ClaudeModel        string
 	TranscriptLimit    int
 	PollInterval       time.Duration
@@ -60,6 +63,14 @@ func Load(envFile string) (*Config, error) {
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+
+	if expr := os.Getenv("YOUTUBE_TITLE_FILTER"); expr != "" {
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid YOUTUBE_TITLE_FILTER: %w", err)
+		}
+		cfg.YouTubeTitleFilter = re
 	}
 
 	return cfg, nil

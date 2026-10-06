@@ -249,3 +249,45 @@ func TestGetEnvDurationReturnsDefaultOnInvalidString(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadTitleFilter verifies that YOUTUBE_TITLE_FILTER is optional, compiled
+// when present, and rejected at startup when it is not a valid regex.
+func TestLoadTitleFilter(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		setRequiredEnvVars(t)
+		t.Setenv("YOUTUBE_TITLE_FILTER", "")
+
+		cfg, err := Load("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.YouTubeTitleFilter != nil {
+			t.Errorf("expected nil filter, got %q", cfg.YouTubeTitleFilter)
+		}
+	})
+
+	t.Run("valid", func(t *testing.T) {
+		setRequiredEnvVars(t)
+		t.Setenv("YOUTUBE_TITLE_FILTER", `MVP #\d+`)
+
+		cfg, err := Load("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !cfg.YouTubeTitleFilter.MatchString("🎙️ MVP #265 - PIOR 4-0 DA HISTÓRIA?") {
+			t.Error("expected filter to match an MVP episode title")
+		}
+		if cfg.YouTubeTitleFilter.MatchString("LIVE REACT VIKINGS X DOLPHINS") {
+			t.Error("expected filter to reject a react title")
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		setRequiredEnvVars(t)
+		t.Setenv("YOUTUBE_TITLE_FILTER", "MVP (")
+
+		if _, err := Load(""); err == nil {
+			t.Error("expected error for invalid regex, got nil")
+		}
+	})
+}

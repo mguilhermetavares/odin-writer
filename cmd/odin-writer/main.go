@@ -193,7 +193,7 @@ func serverCmd(args []string, envFile string) {
 		log.Fatal("server mode requires YOUTUBE_CHANNEL_ID")
 	}
 
-	src := youtube.New(cfg.YouTubeChannelID)
+	src := youtube.New(cfg.YouTubeChannelID, cfg.YouTubeTitleFilter)
 	runner := mustBuildRunner(cfg, src)
 	srv := server.New(runner, cfg.PollInterval)
 
@@ -308,7 +308,7 @@ func mustLoadStyle(nameOrPath string) *style.Style {
 func buildSource(cfg *config.Config, srcType string) source.Source {
 	switch srcType {
 	case "youtube":
-		return youtube.New(cfg.YouTubeChannelID)
+		return youtube.New(cfg.YouTubeChannelID, cfg.YouTubeTitleFilter)
 	case "file":
 		return localfile.New()
 	default:

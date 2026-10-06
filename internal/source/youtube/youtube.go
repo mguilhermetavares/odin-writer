@@ -5,22 +5,32 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/mguilhermetavares/odin-writer/internal/source"
 )
 
-const audioFormat = "bestaudio[ext=webm]/bestaudio"
+const (
+	audioFormat = "bestaudio[ext=webm]/bestaudio"
+
+	// filteredScanDepth is how many recent items per tab are inspected when a
+	// title filter is set, so a matching video is not hidden behind newer ones.
+	filteredScanDepth = 10
+)
 
 // Source fetches YouTube videos using yt-dlp.
 // Requires yt-dlp to be installed on the system.
 type Source struct {
-	channelID string
+	channelID   string
+	titleFilter *regexp.Regexp
 }
 
-func New(channelID string) *Source {
-	return &Source{channelID: channelID}
+// New returns a YouTube source. titleFilter is optional: when non-nil, auto
+// mode only picks videos whose title matches it. Explicit video IDs bypass it.
+func New(channelID string, titleFilter *regexp.Regexp) *Source {
+	return &Source{channelID: channelID, titleFilter: titleFilter}
 }
 
 // Prepare fetches the latest video from the channel and downloads its audio.
@@ -89,39 +99,50 @@ func (s *Source) videoMetadata(ctx context.Context, videoID string) (*videoMeta,
 		return nil, fmt.Errorf("yt-dlp metadata: %w", err)
 	}
 
-	line := strings.TrimSpace(string(out))
-	parts := strings.SplitN(line, "\t", 4)
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
-	}
-
-	meta := &videoMeta{id: parts[0], title: parts[1]}
-	if len(parts) >= 3 {
-		meta.uploadDate = parts[2]
-	}
-	if len(parts) == 4 {
-		meta.durationSec, _ = strconv.Atoi(parts[3])
-	}
-	return meta, nil
+	return parseMeta(strings.TrimSpace(string(out)))
 }
 
-// fetchLatestFrom returns the most recent video from a channel playlist URL.
-// Returns nil (no error) if the playlist is empty or unavailable.
+// fetchLatestFrom returns the most recent video from a channel playlist URL
+// whose title passes the title filter. Returns nil (no error) if the playlist
+// is empty, unavailable, or has no matching video among the inspected items.
 func (s *Source) fetchLatestFrom(ctx context.Context, url string) (*videoMeta, error) {
+	depth := 1
+	if s.titleFilter != nil {
+		depth = filteredScanDepth
+	}
+
 	out, err := exec.CommandContext(ctx,
 		"yt-dlp",
-		"--playlist-end", "1",
+		"--playlist-end", strconv.Itoa(depth),
 		"--match-filter", "live_status != is_upcoming",
 		"--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(duration)s",
 		"--no-warnings",
 		"--quiet",
 		url,
 	).Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
+	if err != nil {
 		return nil, nil
 	}
 
-	line := strings.TrimSpace(string(out))
+	// yt-dlp prints playlist items newest first.
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		meta, err := parseMeta(line)
+		if err != nil {
+			return nil, err
+		}
+		if s.titleFilter == nil || s.titleFilter.MatchString(meta.title) {
+			return meta, nil
+		}
+	}
+	return nil, nil
+}
+
+// parseMeta parses one "id\ttitle\tupload_date\tduration" line from yt-dlp.
+func parseMeta(line string) (*videoMeta, error) {
 	parts := strings.SplitN(line, "\t", 4)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("unexpected yt-dlp output: %q", line)
@@ -154,6 +175,10 @@ func (s *Source) latestVideo(ctx context.Context) (*videoMeta, error) {
 	}
 
 	if len(candidates) == 0 {
+		if s.titleFilter != nil {
+			return nil, fmt.Errorf("no videos matching title filter %q in the last %d items of each tab for channel %s",
+				s.titleFilter, filteredScanDepth, s.channelID)
+		}
 		return nil, fmt.Errorf("no videos or streams found for channel %s", s.channelID)
 	}
 
